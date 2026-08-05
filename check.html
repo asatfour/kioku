@@ -74,9 +74,28 @@ btn.addEventListener("click", async () => {
     say("Service Worker 登録", !!reg, "scope: " + reg.scope);
     await navigator.serviceWorker.ready;
     say("Service Worker 起動完了", true);
+    // ここが肝。初回アクセスでは SW がこのページを「制御」していないことがあり、
+    // その間 Chrome はインストール可能と判定しない。1回読み直すと制御下に入る。
+    const controlled = !!navigator.serviceWorker.controller;
+    say("このページが Service Worker の制御下にある", controlled,
+        controlled ? "" : "★これが原因の可能性が高いです。下の『読み直す』を押してください");
+    if (!controlled) {
+      const b = document.createElement("button");
+      b.textContent = "読み直す（1回で制御下に入ります）";
+      b.onclick = () => location.reload();
+      document.body.insertBefore(b, document.getElementById("out"));
+    }
   } catch (e) {
     say("Service Worker 登録", false, String(e && (e.message || e)));
   }
+
+  try {
+    if (navigator.getInstalledRelatedApps) {
+      const apps = await navigator.getInstalledRelatedApps();
+      say("すでに入っているアプリとして検出されない", apps.length === 0,
+          apps.length ? JSON.stringify(apps) : "なし");
+    }
+  } catch (e) { /* 対応していない端末では飛ばす */ }
 
   try {
     const r = await fetch("manifest.webmanifest");
@@ -96,14 +115,29 @@ btn.addEventListener("click", async () => {
     say("manifest 検査", false, String(e && (e.message || e)));
   }
 
-  // beforeinstallprompt は遅れて来ることがあるので少し待ってから判定する
-  setTimeout(() => {
-    if (!deferred && !matchMedia("(display-mode: standalone)").matches) {
-      say("インストール可能の通知", false,
-          "上の NG 項目が原因です。全部 OK なのにここが NG なら、"
-          + "すでにインストール済みか、Chromeがまだ判定中の可能性があります（再読み込みしてください）");
+  // beforeinstallprompt は遅れて飛ぶことがあるので、30秒待って様子を出し続ける
+  const started = Date.now();
+  const waitRow = document.createElement("li");
+  waitRow.className = "note";
+  out.appendChild(waitRow);
+  const timer = setInterval(() => {
+    const sec = Math.round((Date.now() - started) / 1000);
+    if (deferred || matchMedia("(display-mode: standalone)").matches) {
+      clearInterval(timer);
+      waitRow.textContent = "";
+      return;
     }
-  }, 4000);
+    waitRow.textContent = `Chromeからのインストール可能通知を待っています… ${sec}秒`;
+    if (sec >= 30) {
+      clearInterval(timer);
+      waitRow.textContent = "";
+      say("インストール可能の通知", false,
+          "30秒待っても来ませんでした。上に NG があればそれが原因です。"
+          + "全部 OK なら、Chromeのメニュー（右上の ⋮ ）から「アプリをインストール」"
+          + "または「ホーム画面に追加」を選んでください。それも無い場合は、"
+          + "一度このページを読み直してからもう一度お試しください。");
+    }
+  }, 1000);
 })();
 </script>
 </html>
