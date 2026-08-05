@@ -502,3 +502,14 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 #ptr.ready #ptr-ring { border-color: var(--accent); border-top-color: var(--accent); }
 #ptr.spin #ptr-ring { animation: ptr-spin .7s linear infinite; }
 @keyframes ptr-spin { to { transform: rotate(360deg); } }
+
+/* ------------------------------------------------ デッキの折りたたみ */
+.twist {
+  flex: none; width: 30px; height: 30px; margin-left: -4px;
+  display: grid; place-items: center;
+  background: none; border: 0; padding: 0;
+  color: var(--fg-dim); font-size: 13px; line-height: 1;
+  transition: transform .15s ease;
+}
+.twist.shut { transform: rotate(-90deg); }
+.twist.empty { visibility: hidden; }   /* 場所だけ空けて名前の頭を揃える */

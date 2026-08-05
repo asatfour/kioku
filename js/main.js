@@ -163,6 +163,36 @@ function currentQueue() {
   });
 }
 
+// 折りたたみ状態はデッキ名で覚える（IDは取り込み直しで変わりうるため）
+function collapsedSet() {
+  try {
+    const raw = localStorage.getItem("deck.collapsed");
+    if (raw != null) return new Set(JSON.parse(raw));
+  } catch { /* 壊れていたら初期状態として扱う */ }
+  return null; // 未設定
+}
+const saveCollapsed = (set) =>
+  localStorage.setItem("deck.collapsed", JSON.stringify([...set]));
+
+const hasChildren = (name) => app.decks.some((x) => x.name.startsWith(name + "::"));
+
+function toggleCollapse(name) {
+  const set = collapsedSet() ?? new Set();
+  if (set.has(name)) set.delete(name);
+  else set.add(name);
+  saveCollapsed(set);
+  renderDeckList();
+}
+
+function toggleAllDecks() {
+  const parents = app.decks.filter((d) => hasChildren(d.name)).map((d) => d.name);
+  const set = collapsedSet() ?? new Set();
+  // ひとつでも開いていれば「全部たたむ」、全部たたまれていれば「全部ひらく」
+  const anyOpen = parents.some((n) => !set.has(n));
+  saveCollapsed(anyOpen ? new Set(parents) : new Set());
+  renderDeckList();
+}
+
 function renderDeckList() {
   // デッキごとの枚数を数える
   const per = new Map();
@@ -193,18 +223,50 @@ function renderDeckList() {
 
   const sorted = [...app.decks].sort((a, b) => a.name.localeCompare(b.name, "ja"));
   const sel = app.selectedDeckIds ? new Set(app.selectedDeckIds) : null;
+
+  // 初回は親を全部たたんでおく。48デッキが一度に並ぶと目的の階層まで届かない。
+  let collapsed = collapsedSet();
+  if (collapsed === null) {
+    collapsed = new Set(app.decks.filter((d) => hasChildren(d.name)).map((d) => d.name));
+    saveCollapsed(collapsed);
+  }
+  // 祖先のどれかがたたまれていれば表示しない
+  const hidden = (name) => {
+    const parts = name.split("::");
+    for (let i = 1; i < parts.length; i++) {
+      if (collapsed.has(parts.slice(0, i).join("::"))) return true;
+    }
+    return false;
+  };
+
   $("#deck-list").innerHTML = sorted
+    .filter((d) => !hidden(d.name))
     .map((d) => {
       const p = per.get(d.id) || { new: 0, learn: 0, rev: 0 };
       const depth = Math.min(3, d.name.split("::").length - 1);
       const leaf = d.name.split("::").pop();
       const num = (v, k) => `<span class="${v ? "n" + k : "zero"}">${v}</span>`;
+      const parent = hasChildren(d.name);
+      const shut = collapsed.has(d.name);
+      // 子を持たないデッキにも同じ幅の場所を空けて、名前の頭を揃える
+      const twist = parent
+        ? `<button class="twist${shut ? " shut" : ""}" data-twist="${d.id}"
+             aria-label="${shut ? "ひらく" : "たたむ"}" aria-expanded="${!shut}">▾</button>`
+        : `<span class="twist empty" aria-hidden="true"></span>`;
       return `<div class="deck ${sel?.has(d.id) ? "selected" : ""}" data-id="${d.id}" data-depth="${depth}">
+        ${twist}
         <span class="name">${escapeHtml(leaf)}</span>
         <span class="nums">${num(p.new, 0)}${num(p.learn, 1)}${num(p.rev, 2)}</span>
       </div>`;
     })
     .join("");
+
+  const btn = $("#btn-collapse-all");
+  if (btn) {
+    const parents = app.decks.filter((d) => hasChildren(d.name)).map((d) => d.name);
+    btn.classList.toggle("hidden", parents.length === 0);
+    btn.textContent = parents.some((n) => !collapsed.has(n)) ? "たたむ" : "ひらく";
+  }
 }
 
 // ---------------------------------------------------------------- 学習
@@ -1004,12 +1066,20 @@ function wireUI() {
   $("#btn-install").onclick = doInstall;
   $("#btn-install-2").onclick = doInstall;
   $("#btn-backup-now").onclick = exportAll;
+  $("#btn-collapse-all").onclick = toggleAllDecks;
   $("#set-backup-days").onchange = async (e) => {
     localStorage.setItem("backup.days", e.target.value);
     await refreshBackupBanner();
   };
 
   $("#deck-list").onclick = (e) => {
+    // 三角は「たたむ/ひらく」専用。デッキの選択とは別扱いにする
+    const tw = e.target.closest(".twist[data-twist]");
+    if (tw) {
+      const deck = app.decks.find((d) => d.id === Number(tw.dataset.twist));
+      if (deck) toggleCollapse(deck.name);
+      return;
+    }
     const el = e.target.closest(".deck");
     if (!el) return;
     const id = Number(el.dataset.id);
