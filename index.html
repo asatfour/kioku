@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b1d21">
+<title>記憶 — 自分専用の学習アプリ</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<!-- iOS は manifest を見ないので、全画面表示・題名・ステータスバーは meta で指定する -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="記憶">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header id="topbar">
+  <button id="btn-home" class="icon-btn" title="ホーム">🏠</button>
+  <div id="mode-strip"></div>
+  <button id="btn-stats" class="icon-btn" title="統計">📊</button>
+  <button id="btn-settings" class="icon-btn" title="設定">⚙️</button>
+</header>
+
+<!-- ===================== ホーム ===================== -->
+<main id="view-home" class="view">
+  <section id="empty-state" class="empty hidden">
+    <h1>記憶</h1>
+    <p class="lead">Anki のデッキ（.apkg）を読み込むと、ここから学習できます。</p>
+    <label class="btn primary big">
+      <input type="file" id="file-import-empty" accept=".apkg,.colpkg" hidden>
+      デッキを読み込む
+    </label>
+    <p class="hint">本家 Anki が書き出した新形式（zstd）も、genanki 製の旧形式も読めます。</p>
+  </section>
+
+  <section id="home-body" class="hidden">
+    <div id="today-summary" class="card-panel">
+      <div class="today-head">
+        <h2>今日</h2>
+        <span id="today-date"></span>
+      </div>
+      <div id="today-counts" class="counts"></div>
+      <div id="today-progress" class="progress"><div class="bar"></div></div>
+      <div id="today-note" class="muted"></div>
+    </div>
+
+    <div class="section-head">
+      <h2>デッキ</h2>
+      <div class="row-actions">
+        <label class="btn small">
+          <input type="file" id="file-import" accept=".apkg,.colpkg" hidden>
+          読み込む
+        </label>
+        <button id="btn-export" class="btn small">書き出す</button>
+      </div>
+    </div>
+    <div id="deck-list"></div>
+
+    <button id="btn-study-all" class="btn primary big sticky-study">学習をはじめる</button>
+  </section>
+</main>
+
+<!-- ===================== 学習 ===================== -->
+<main id="view-study" class="view hidden">
+  <div id="study-head">
+    <div id="study-counts"></div>
+    <div id="study-deck" class="muted"></div>
+  </div>
+
+  <div id="card-area">
+    <div id="card-content" class="card-render"></div>
+  </div>
+
+  <div id="answer-bar">
+    <button id="btn-show" class="btn primary big">解答を見る</button>
+    <div id="grade-buttons" class="hidden">
+      <button class="grade" data-rating="1"><span class="g-label">思い出せない</span><span class="g-hint">出てこなかった</span><span class="g-ivl"></span></button>
+      <button class="grade" data-rating="2"><span class="g-label">あやふや</span><span class="g-hint">時間がかかった</span><span class="g-ivl"></span></button>
+      <button class="grade" data-rating="3"><span class="g-label">思い出せた</span><span class="g-hint">少し考えて正解</span><span class="g-ivl"></span></button>
+      <button class="grade" data-rating="4"><span class="g-label">即答</span><span class="g-hint">迷わず出た</span><span class="g-ivl"></span></button>
+    </div>
+    <div id="grade-buttons-2" class="hidden">
+      <button class="grade g2" data-rating="1"><span class="g-label">できなかった</span><span class="g-ivl"></span></button>
+      <button class="grade g2" data-rating="3"><span class="g-label">できた</span><span class="g-ivl"></span></button>
+    </div>
+    <div id="undo-strip" class="hidden"><span id="undo-text"></span><button id="undo-now">戻す</button></div>
+  </div>
+
+  <div id="study-tools">
+    <button id="btn-ai" class="tool">🤖 AIに聞く</button>
+    <button id="btn-undo" class="tool">↩ 取り消し</button>
+    <button id="btn-suspend" class="tool">⏸ 保留</button>
+    <button id="btn-flag" class="tool">🚩 印</button>
+  </div>
+
+  <section id="finished" class="hidden empty">
+    <h2>今日のぶんは終わりです</h2>
+    <p id="finished-detail" class="muted"></p>
+    <button id="btn-more" class="btn">制限を超えて続ける</button>
+    <button id="btn-back-home" class="btn primary">ホームへ</button>
+  </section>
+</main>
+
+<!-- ===================== AI パネル ===================== -->
+<aside id="ai-panel" class="panel hidden">
+  <div class="panel-head">
+    <h2>🤖 このカードについて聞く</h2>
+    <button id="ai-close" class="icon-btn">✕</button>
+  </div>
+  <div id="ai-quick"></div>
+  <div id="ai-log"></div>
+  <form id="ai-form">
+    <textarea id="ai-input" rows="2" placeholder="わからないところを書く…"></textarea>
+    <button class="btn primary" type="submit">送る</button>
+  </form>
+  <p id="ai-status" class="muted"></p>
+</aside>
+
+<!-- ===================== 統計 ===================== -->
+<main id="view-stats" class="view hidden">
+  <h1>統計</h1>
+  <div id="stats-body"></div>
+</main>
+
+<!-- ===================== 設定 ===================== -->
+<main id="view-settings" class="view hidden">
+  <h1>設定</h1>
+
+  <section class="card-panel">
+    <h2>学習の強さ</h2>
+    <label class="field">
+      <span>目標保持率（覚えていたい割合）</span>
+      <input type="range" id="set-dr" min="0.75" max="0.97" step="0.01">
+      <output id="set-dr-out"></output>
+    </label>
+    <p class="hint">高いほど復習は増えて忘れにくくなります。既定は 0.90。</p>
+    <label class="field">
+      <span>1日の区切り（この時刻までは前日扱い）</span>
+      <input type="number" id="set-rollover" min="0" max="23">時
+    </label>
+  </section>
+
+  <section class="card-panel">
+    <h2>答え合わせのしかた</h2>
+    <label class="field"><span>ボタンの数</span>
+      <select id="set-grading">
+        <option value="2">2つ（できた／できなかった）— 迷わない</option>
+        <option value="4">4つ（本家と同じ細かさ）</option>
+      </select>
+    </label>
+    <p class="hint">2つにすると「むずい」と「ふつう」で迷う時間がなくなります。記憶モデルは同じものが動きます。</p>
+    <label class="field"><span>押し間違い防止（解答表示から待つ時間）</span>
+      <input type="number" id="set-guard" min="0" max="2000" step="100">ミリ秒
+    </label>
+    <label class="field"><span>解答を出したら解答位置まで自動でスクロール</span>
+      <input type="checkbox" id="set-autoscroll">
+    </label>
+    <label class="field"><span>カード内の「外部AIに聞く」ボタンを隠す</span>
+      <input type="checkbox" id="set-hideailinks">
+    </label>
+    <p class="hint">このアプリはカードを離れずに聞けるので、同じボタンが二重に並ぶのを防ぎます。カードのデータは変更しません。</p>
+    <label class="field"><span>文字の大きさ</span>
+      <input type="range" id="set-fontsize" min="14" max="24" step="1">
+      <output id="set-fontsize-out"></output>
+    </label>
+  </section>
+
+  <section class="card-panel">
+    <h2>場面別モード</h2>
+    <p class="hint">その場でできることだけを出します。枚数と条件を変えられます。</p>
+    <div id="mode-editor"></div>
+  </section>
+
+  <section class="card-panel">
+    <h2>AI</h2>
+    <label class="field"><span>使うAI</span>
+      <select id="set-ai-provider">
+        <option value="gemini">Gemini（無料枠あり）</option>
+        <option value="claude">Claude</option>
+        <option value="openai">OpenAI互換</option>
+        <option value="none">使わない（外部サイトを開く）</option>
+      </select>
+    </label>
+    <label class="field"><span>APIキー</span><input type="password" id="set-ai-key" placeholder="この端末にだけ保存されます"></label>
+    <label class="field"><span>モデル</span><input type="text" id="set-ai-model" placeholder="既定を使う"></label>
+    <label class="field"><span>ベースURL（OpenAI互換のとき）</span><input type="text" id="set-ai-base" placeholder="https://…/v1"></label>
+    <p class="hint">キーはこの端末の localStorage にだけ入ります。通信は選んだ提供元へ直接行きます。</p>
+  </section>
+
+  <section class="card-panel danger">
+    <h2>データ</h2>
+    <button id="btn-wipe" class="btn danger">全部消す</button>
+    <p class="hint">読み込んだデッキと学習履歴を削除します。書き出してから実行してください。</p>
+  </section>
+</main>
+
+<div id="img-viewer" class="hidden"><img alt="拡大表示"><button id="img-close" class="icon-btn">✕</button></div>
+<div id="toast" class="hidden"></div>
+<div id="busy" class="hidden"><div class="spinner"></div><span id="busy-text"></span></div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["\\[", "\\]"], ["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+    startup: { typeset: false },
+  };
+</script>
+<script src="vendor/tex-mml-chtml.js" id="MathJax-script" async></script>
+<script src="vendor/sql-wasm.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/fzstd.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
