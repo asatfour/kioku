@@ -1,0 +1,46 @@
+記憶（kioku）が同梱している第三者ソフトウェアの著作権表示とライセンス
+=================================================================
+
+このアプリ自体のコードとは別に、vendor/ 以下に次のライブラリを同梱しています。
+いずれも著作権表示の保持が条件のライセンスです。改変せずそのまま同梱しています。
+
+-----------------------------------------------------------------
+JSZip v3.10.1  （vendor/jszip.min.js）
+  (c) 2009-2016 Stuart Knightley <stuart [at] stuartk.com>
+  Dual licenced under the MIT license or GPLv3.
+  https://github.com/Stuk/jszip
+  https://raw.github.com/Stuk/jszip/main/LICENSE.markdown
+
+  JSZip uses the library pako released under the MIT license:
+  https://github.com/nodeca/pako/blob/main/LICENSE
+  （上記はライブラリ本体のヘッダに記載された表示をそのまま転記したもの）
+
+-----------------------------------------------------------------
+sql.js  （vendor/sql-wasm.js, vendor/sql-wasm.wasm）
+  MIT License
+  https://github.com/sql-js/sql.js
+
+  sql.js は SQLite を Emscripten で WebAssembly に変換したものです。
+  SQLite 本体はパブリックドメインです。
+  https://www.sqlite.org/copyright.html
+
+-----------------------------------------------------------------
+fzstd  （vendor/fzstd.js）
+  MIT License
+  Copyright (c) 2021 Arjun Barrett
+  https://github.com/101arrowz/fzstd
+
+-----------------------------------------------------------------
+MathJax v3  （vendor/tex-mml-chtml.js）
+  Apache License 2.0
+  Copyright (c) 2009-2023 The MathJax Consortium
+  https://github.com/mathjax/MathJax
+  http://www.apache.org/licenses/LICENSE-2.0
+
+-----------------------------------------------------------------
+Anki との関係について
+  このアプリは Anki のコードを一切含みません。.apkg / .colpkg の
+  ファイル形式に合わせて独自に読み書きを実装したものです。
+  Anki は Ankitects Pty Ltd の著作物で AGPL-3.0、AnkiDroid は GPL-3.0 です。
+  https://github.com/ankitects/anki
+  https://github.com/ankidroid/Anki-Android

@@ -472,3 +472,14 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ------------------------------------------------ 通知帯（更新・インストール・バックアップ） */
+#banners { position: sticky; top: 0; z-index: 40; }
+.banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; background: var(--bg-elev);
+  border-bottom: 1px solid var(--line); font-size: 14px;
+}
+.banner > span { flex: 1; min-width: 0; }   /* 長文で横に伸びないように */
+.banner.warn { border-left: 3px solid #e0a341; }
+.banner-x { flex: none; opacity: .6; }

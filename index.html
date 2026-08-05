@@ -23,6 +23,25 @@
   <button id="btn-settings" class="icon-btn" title="設定">⚙️</button>
 </header>
 
+<!-- 画面をまたいで出す通知帯。どの画面にいても気づけるようにヘッダ直下に置く。 -->
+<div id="banners">
+  <div id="update-banner" class="banner hidden">
+    <span>新しい版が届いています。</span>
+    <button id="btn-reload" class="btn small">今すぐ更新</button>
+    <button class="banner-x icon-btn" data-close="update-banner" aria-label="閉じる">✕</button>
+  </div>
+  <div id="install-banner" class="banner hidden">
+    <span>ホーム画面に入れると、圏外でも開けます。</span>
+    <button id="btn-install" class="btn small">インストール</button>
+    <button class="banner-x icon-btn" data-close="install-banner" aria-label="閉じる">✕</button>
+  </div>
+  <div id="backup-banner" class="banner warn hidden">
+    <span id="backup-msg"></span>
+    <button id="btn-backup-now" class="btn small">書き出す</button>
+    <button class="banner-x icon-btn" data-close="backup-banner" aria-label="閉じる">✕</button>
+  </div>
+</div>
+
 <!-- ===================== ホーム ===================== -->
 <main id="view-home" class="view">
   <section id="empty-state" class="empty hidden">
@@ -32,6 +51,7 @@
       <input type="file" id="file-import-empty" accept=".apkg,.colpkg" hidden>
       デッキを読み込む
     </label>
+    <button id="btn-import-url-empty" class="btn big">URLから読み込む</button>
     <p class="hint">本家 Anki が書き出した新形式（zstd）も、genanki 製の旧形式も読めます。</p>
   </section>
 
@@ -53,6 +73,7 @@
           <input type="file" id="file-import" accept=".apkg,.colpkg" hidden>
           読み込む
         </label>
+        <button id="btn-import-url" class="btn small">URL</button>
         <button id="btn-export" class="btn small">書き出す</button>
       </div>
     </div>
@@ -192,6 +213,33 @@
       もっと多く使いたい日は モデルに <code>gemini-2.5-flash-lite</code> と入れると1日の上限が緩くなります。
     </p>
     <p class="hint">キーはこの端末の localStorage にだけ入ります。通信は選んだ提供元へ直接行きます。</p>
+  </section>
+
+  <section class="card-panel">
+    <h2>バックアップ</h2>
+    <p class="hint">
+      学習履歴はこの端末の中にだけあります。<strong>ブラウザの「閲覧データを削除」で消えます。</strong>
+      ときどき .apkg に書き出しておけば、機種変更のときも Anki 本体にも戻せます。
+    </p>
+    <label class="field"><span>書き出しを催促する間隔</span>
+      <select id="set-backup-days">
+        <option value="3">3日</option>
+        <option value="7">7日</option>
+        <option value="14">14日</option>
+        <option value="30">30日</option>
+        <option value="0">催促しない</option>
+      </select>
+    </label>
+    <p class="hint" id="last-export-note">まだ書き出していません。</p>
+    <button id="btn-export-2" class="btn">いま書き出す</button>
+    <p class="hint" id="storage-note"></p>
+  </section>
+
+  <section class="card-panel">
+    <h2>アプリ</h2>
+    <button id="btn-install-2" class="btn" disabled>ホーム画面に追加</button>
+    <p class="hint" id="install-note">この端末の対応状況を確認しています…</p>
+    <p class="hint"><a href="LICENSES.txt" target="_blank" rel="noopener">同梱ライブラリのライセンス表示</a></p>
   </section>
 
   <section class="card-panel danger">

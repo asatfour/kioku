@@ -67,10 +67,12 @@ async function init() {
   app.modeId = app.settings.modeId || "desk";
   makeFsrs();
   wireUI();
+  setupInstall(); // beforeinstallprompt は起動直後に飛ぶので、描画より先に構える
   await loadCollection();
   renderModeStrip();
   await showHome();
   registerSW();
+  requestPersistence();
 }
 
 function makeFsrs() {
@@ -120,6 +122,7 @@ async function showHome() {
   const has = app.cards.length > 0;
   $("#empty-state").classList.toggle("hidden", has);
   $("#home-body").classList.toggle("hidden", !has);
+  await refreshBackupBanner();
   if (!has) return;
 
   const rev = await store.revlogSince(dayStart(Date.now(), app.settings.rolloverHour));
@@ -508,10 +511,156 @@ async function exportAll() {
     a.download = `記憶_${new Date().toISOString().slice(0, 10)}.apkg`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    await store.setMeta("lastExportAt", Date.now());
+    await refreshBackupBanner();
     toast("書き出しました（Ankiで読み込めます）");
   } finally {
     unbusy();
   }
+}
+
+/**
+ * URL から .apkg を取り込む。
+ * 相手のサーバが別オリジンからの取得を許していないと fetch は必ず失敗するので、
+ * そのときは「端末に保存してから読み込む」へ誘導する（黙って失敗させない）。
+ */
+async function importFromUrl(url) {
+  if (!url) return;
+  let u;
+  try {
+    u = new URL(url.trim());
+  } catch {
+    return toast("URLの形式が正しくありません");
+  }
+  if (!/^https?:$/.test(u.protocol)) return toast("http/https のURLを入れてください");
+
+  busy("ダウンロードしています…");
+  try {
+    const res = await fetch(u.href, { redirect: "follow" });
+    if (!res.ok) throw new Error(`${res.status}`);
+    const blob = await res.blob();
+    if (blob.size < 100) throw new Error("中身が空です");
+    const name = decodeURIComponent(u.pathname.split("/").pop() || "deck.apkg");
+    unbusy();
+    await importFile(new File([blob], name.endsWith(".apkg") || name.endsWith(".colpkg") ? name : name + ".apkg"));
+  } catch (e) {
+    unbusy();
+    // TypeError = CORS かネットワーク。Google ドライブの共有リンクはここに落ちる。
+    const cors = e instanceof TypeError;
+    toast(
+      cors
+        ? "そのURLからは直接取り込めません（配布元が許可していません）。端末に保存してから「読み込む」で選んでください。"
+        : "取り込めませんでした: " + (e.message || e)
+    );
+  }
+}
+
+// ------------------------------------------------ バックアップの催促
+
+const backupDays = () => Number(localStorage.getItem("backup.days") ?? "7");
+
+async function refreshBackupBanner() {
+  const el = $("#backup-banner");
+  const last = await store.getMeta("lastExportAt", null);
+  const days = backupDays();
+
+  const note = $("#last-export-note");
+  if (note) {
+    note.textContent = last
+      ? `最後の書き出し: ${new Date(last).toLocaleString("ja-JP")}`
+      : "まだ書き出していません。";
+  }
+
+  if (!app.cards.length || days === 0 || el.dataset.dismissed === "1") {
+    el.classList.add("hidden");
+    return;
+  }
+  const elapsed = last == null ? Infinity : (Date.now() - last) / 86400000;
+  if (elapsed < days) {
+    el.classList.add("hidden");
+    return;
+  }
+  $("#backup-msg").textContent =
+    last == null
+      ? "まだ一度も書き出していません。端末の中だけにあるので、消えると戻せません。"
+      : `前回の書き出しから ${Math.floor(elapsed)} 日たっています。`;
+  el.classList.remove("hidden");
+}
+
+/**
+ * ブラウザに「このデータは勝手に消さないで」と申告する。
+ * 容量不足のときに真っ先に捨てられるのを防ぐ（学習履歴の全損対策）。
+ */
+async function requestPersistence() {
+  const note = $("#storage-note");
+  try {
+    if (!navigator.storage?.persist) {
+      if (note) note.textContent = "この端末では保存領域の保護状態を確認できません。";
+      return;
+    }
+    const persisted = (await navigator.storage.persisted()) || (await navigator.storage.persist());
+    let usage = "";
+    if (navigator.storage.estimate) {
+      const { usage: u } = await navigator.storage.estimate();
+      if (u) usage = `　使用中: ${(u / 1048576).toFixed(1)}MB`;
+    }
+    if (note) {
+      note.textContent = persisted
+        ? "保存領域は保護されています（容量不足でも自動削除されません）。" + usage
+        : "保存領域は保護されていません。容量不足のとき自動削除される場合があります。" + usage;
+    }
+  } catch {
+    /* 対応していない端末では何もしない */
+  }
+}
+
+// ------------------------------------------------ インストールと更新
+
+let deferredInstall = null;
+
+function setupInstall() {
+  const note = $("#install-note");
+  const btn2 = $("#btn-install-2");
+  const standalone = matchMedia("(display-mode: standalone)").matches;
+
+  if (standalone) {
+    if (note) note.textContent = "すでにアプリとして起動しています。";
+    if (btn2) btn2.disabled = true;
+    return;
+  }
+  if (note) {
+    note.textContent =
+      "インストールできる状態になると、ここのボタンが押せるようになります。"
+      + "（Chrome以外や、他アプリの中で開いた画面では出ません）";
+  }
+
+  addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault(); // 既定のバナーを止めて、こちらの好きな場所から出す
+    deferredInstall = e;
+    if ($("#install-banner").dataset.dismissed !== "1") {
+      $("#install-banner").classList.remove("hidden");
+    }
+    if (btn2) btn2.disabled = false;
+    if (note) note.textContent = "インストールできます。";
+  });
+
+  addEventListener("appinstalled", () => {
+    deferredInstall = null;
+    $("#install-banner").classList.add("hidden");
+    if (btn2) btn2.disabled = true;
+    if (note) note.textContent = "インストール済みです。";
+    toast("ホーム画面に追加しました");
+  });
+}
+
+async function doInstall() {
+  if (!deferredInstall) {
+    return toast("この端末ではまだインストールできません。Chromeのメニューからお試しください。");
+  }
+  deferredInstall.prompt();
+  const { outcome } = await deferredInstall.userChoice;
+  deferredInstall = null;
+  if (outcome !== "accepted") toast("インストールを取りやめました");
 }
 
 /** 自前のカード → Anki のカード行 */
@@ -640,6 +789,9 @@ function showSettings() {
   $("#set-ai-key").value = s.key;
   $("#set-ai-model").value = s.model;
   $("#set-ai-base").value = s.base;
+  $("#set-backup-days").value = String(backupDays());
+  refreshBackupBanner();
+  requestPersistence();
 
   $("#mode-editor").innerHTML = app.modes
     .map(
@@ -751,6 +903,29 @@ function wireUI() {
   $("#file-import").onchange = (e) => e.target.files[0] && importFile(e.target.files[0]);
   $("#file-import-empty").onchange = (e) => e.target.files[0] && importFile(e.target.files[0]);
   $("#btn-export").onclick = exportAll;
+  $("#btn-export-2").onclick = exportAll;
+
+  const askUrl = () =>
+    importFromUrl(prompt("デッキ（.apkg）の直リンクURLを貼り付けてください", "https://"));
+  $("#btn-import-url").onclick = askUrl;
+  $("#btn-import-url-empty").onclick = askUrl;
+
+  // 通知帯
+  $("#banners").addEventListener("click", (e) => {
+    const x = e.target.closest("[data-close]");
+    if (!x) return;
+    const el = $("#" + x.dataset.close);
+    el.classList.add("hidden");
+    el.dataset.dismissed = "1"; // この起動中は出し直さない
+  });
+  $("#btn-reload").onclick = () => location.reload();
+  $("#btn-install").onclick = doInstall;
+  $("#btn-install-2").onclick = doInstall;
+  $("#btn-backup-now").onclick = exportAll;
+  $("#set-backup-days").onchange = async (e) => {
+    localStorage.setItem("backup.days", e.target.value);
+    await refreshBackupBanner();
+  };
 
   $("#deck-list").onclick = (e) => {
     const el = e.target.closest(".deck");
@@ -830,9 +1005,29 @@ function escapeHtml(s) {
 }
 
 function registerSW() {
-  if ("serviceWorker" in navigator && location.protocol !== "file:") {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
-  }
+  if (!("serviceWorker" in navigator) || location.protocol === "file:") return;
+  navigator.serviceWorker
+    .register("sw.js")
+    .then((reg) => {
+      // 新しい版が入ったら知らせる。controller が居る＝2回目以降の起動なので、
+      // 「初回インストール」と「本当の更新」を取り違えない。
+      reg.addEventListener("updatefound", () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener("statechange", () => {
+          if (nw.state === "installed" && navigator.serviceWorker.controller) {
+            if ($("#update-banner").dataset.dismissed !== "1") {
+              $("#update-banner").classList.remove("hidden");
+            }
+          }
+        });
+      });
+      // 画面に戻ってきたときに更新を確認する（開きっぱなしでも古いままにしない）
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") reg.update().catch(() => {});
+      });
+    })
+    .catch(() => {});
 }
 
 // デバッグ用（ブラウザのコンソールから状態を見る）
