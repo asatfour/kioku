@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>インストール診断</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #14161a; color: #e8eaed;
+         margin: 0; padding: 16px; line-height: 1.7; }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  li { list-style: none; }
+  .ng { color: #ff8a80; }
+  .ok { color: #9be29b; }
+  .note { color: #9aa0a6; font-size: 13px; word-break: break-all; }
+  button { font-size: 17px; padding: 14px 20px; width: 100%; margin: 16px 0;
+           border: 0; border-radius: 10px; background: #4c8bf5; color: #fff; }
+  button[disabled] { background: #3a3f47; color: #9aa0a6; }
+</style>
+<h1>インストール診断</h1>
+<button id="install" disabled>インストール（まだ準備できていません）</button>
+<ul id="out"><li>調べています…</li></ul>
+
+<script>
+// PWA としてインストールできる条件が満たされているかを端末側で判定する。
+// beforeinstallprompt が飛ぶかどうかが Chrome の最終判断そのもの。
+const out = document.getElementById("out");
+const rows = [];
+const say = (name, state, detail = "") => {
+  rows.push({ name, state, detail });
+  out.innerHTML = rows.map((r) =>
+    `<li class="${r.state === true ? "ok" : r.state === false ? "ng" : ""}">` +
+    `${r.state === true ? "OK" : r.state === false ? "NG" : "--"} ${r.name}` +
+    (r.detail ? `<div class="note">${r.detail}</div>` : "") + "</li>").join("");
+};
+
+let deferred = null;
+const btn = document.getElementById("install");
+addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferred = e;
+  btn.disabled = false;
+  btn.textContent = "このアプリをインストール";
+  say("インストール可能（Chromeが承認）", true, "上のボタンで入ります");
+});
+btn.addEventListener("click", async () => {
+  if (!deferred) return;
+  deferred.prompt();
+  const { outcome } = await deferred.userChoice;
+  say("インストールの結果", outcome === "accepted", outcome);
+});
+
+(async () => {
+  const ua = navigator.userAgent;
+  say("ブラウザ", null, ua);
+  // アプリ内ブラウザ（LINE/X/Instagram等）は仕様上インストールできない
+  const inApp = /(FBAN|FBAV|Instagram|Line\/|Twitter|MicroMessenger)/i.test(ua);
+  say("アプリ内ブラウザではない", !inApp,
+      inApp ? "リンクをChromeで開き直してください（メニュー→ブラウザで開く）" : "");
+  say("Chrome系である", /Chrome\//.test(ua) && !/EdgA|OPR|SamsungBrowser|Firefox/.test(ua),
+      /EdgA|OPR|SamsungBrowser|Firefox/.test(ua) ? "Chrome以外は表示位置が違います" : "");
+  say("安全な接続（https）", isSecureContext, location.origin);
+  say("すでにインストール済みで開いている",
+      matchMedia("(display-mode: standalone)").matches ? true : null,
+      matchMedia("(display-mode: standalone)").matches ? "アプリとして起動中です" : "ブラウザで表示中");
+
+  try {
+    const reg = await navigator.serviceWorker.register("sw.js");
+    say("Service Worker 登録", !!reg, "scope: " + reg.scope);
+    await navigator.serviceWorker.ready;
+    say("Service Worker 起動完了", true);
+  } catch (e) {
+    say("Service Worker 登録", false, String(e && (e.message || e)));
+  }
+
+  try {
+    const r = await fetch("manifest.webmanifest");
+    const m = await r.json();
+    say("manifest 取得", r.ok, r.headers.get("content-type") || "");
+    say("display が standalone", m.display === "standalone", m.display);
+    const su = new URL(m.start_url, location.href).href;
+    say("start_url がスコープ内", su.startsWith(new URL(m.scope, location.href).href), su);
+    for (const ic of m.icons) {
+      const ir = await fetch(new URL(ic.src, location.href));
+      const blob = await ir.blob();
+      const bmp = await createImageBitmap(blob);
+      say(`アイコン ${ic.sizes}`, ir.ok && `${bmp.width}x${bmp.height}` === ic.sizes,
+          `${bmp.width}x${bmp.height} / ${blob.type} / ${blob.size}B / purpose=${ic.purpose}`);
+    }
+  } catch (e) {
+    say("manifest 検査", false, String(e && (e.message || e)));
+  }
+
+  // beforeinstallprompt は遅れて来ることがあるので少し待ってから判定する
+  setTimeout(() => {
+    if (!deferred && !matchMedia("(display-mode: standalone)").matches) {
+      say("インストール可能の通知", false,
+          "上の NG 項目が原因です。全部 OK なのにここが NG なら、"
+          + "すでにインストール済みか、Chromeがまだ判定中の可能性があります（再読み込みしてください）");
+    }
+  }, 4000);
+})();
+</script>
+</html>
