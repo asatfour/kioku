@@ -89,6 +89,23 @@ btn.addEventListener("click", async () => {
     say("Service Worker 登録", false, String(e && (e.message || e)));
   }
 
+  // シークレットモードでは Chrome はインストールを許可せず、通知も飛ばさない。
+  // 直接は判別できないので、保存できる容量の少なさから推定する（通常は数十GB、シークレットは数GB）。
+  try {
+    const est = await navigator.storage?.estimate?.();
+    if (est && est.quota) {
+      const gb = est.quota / 1073741824;
+      say("シークレットモードではなさそう（推定）", gb > 4,
+          `保存できる容量 ${gb.toFixed(1)}GB` + (gb <= 4 ? "　★シークレットタブだとインストールできません" : ""));
+    }
+  } catch (e) { /* 取れない端末では飛ばす */ }
+
+  // 端末によっては画面に一度触れるまで通知が来ないので、触れたら数え直す
+  addEventListener("pointerdown", function once() {
+    removeEventListener("pointerdown", once);
+    if (!deferred) say("画面に触れました（ここから改めて通知を待ちます）", null, "");
+  }, { once: true });
+
   try {
     if (navigator.getInstalledRelatedApps) {
       const apps = await navigator.getInstalledRelatedApps();
