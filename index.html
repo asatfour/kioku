@@ -184,8 +184,13 @@
       </select>
     </label>
     <label class="field"><span>APIキー</span><input type="password" id="set-ai-key" placeholder="この端末にだけ保存されます"></label>
-    <label class="field"><span>モデル</span><input type="text" id="set-ai-model" placeholder="既定を使う"></label>
+    <label class="field"><span>モデル</span><input type="text" id="set-ai-model" placeholder="既定: gemini-2.5-flash（無料枠）"></label>
     <label class="field"><span>ベースURL（OpenAI互換のとき）</span><input type="text" id="set-ai-base" placeholder="https://…/v1"></label>
+    <p class="hint">
+      Gemini のキーは <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>
+      で無料で作れます（支払い情報の登録なしのままなら無料枠のみで動き、課金は発生しません）。
+      もっと多く使いたい日は モデルに <code>gemini-2.5-flash-lite</code> と入れると1日の上限が緩くなります。
+    </p>
     <p class="hint">キーはこの端末の localStorage にだけ入ります。通信は選んだ提供元へ直接行きます。</p>
   </section>
 

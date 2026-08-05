@@ -167,7 +167,11 @@ async function handle(res) {
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     if (res.status === 429) {
-      throw new Error("利用上限に達しています（429）。しばらく待つか別の提供元に切り替えてください。");
+      // 無料枠は「1分あたり」と「1日あたり」の両方に上限がある。前者なら少し待てば戻る。
+      throw new Error(
+        "無料枠の上限に達しました（429）。数分待つと戻ることが多いです。"
+        + "1日の上限なら、設定のモデルに gemini-2.5-flash-lite と入れると多く使えます。"
+      );
     }
     throw new Error(`${res.status} ${text.slice(0, 200)}`);
   }
