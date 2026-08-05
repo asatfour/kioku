@@ -55,6 +55,27 @@ btn.addEventListener("click", async () => {
 (async () => {
   const ua = navigator.userAgent;
   say("ブラウザ", null, ua);
+
+  // UA文字列は誰でも書き換えられる。こちらはブラウザ本体が答えるので詐称しにくい。
+  // beforeinstallprompt は Chrome系だけの機能なので、ここが本物かどうかが決定的。
+  const uad = navigator.userAgentData;
+  if (!uad) {
+    say("本当にChromeか（ブラウザ本体の申告）", false,
+        "userAgentData が無い → Chrome系ではありません。この種のブラウザはPWAをインストールできません");
+  } else {
+    let ex = {};
+    try {
+      ex = await uad.getHighEntropyValues(["fullVersionList", "platformVersion", "model"]);
+    } catch (e) { /* 取れなくても brands だけで足りる */ }
+    const brands = (uad.brands || []).map((b) => `${b.brand} ${b.version}`).join(" / ");
+    const isWebView = /Android WebView/i.test(brands);
+    const isChrome = /Google Chrome/i.test(brands) && !isWebView;
+    say("本当にChromeか（ブラウザ本体の申告）", isChrome,
+        `${brands}｜端末: ${ex.model || "不明"}｜Android ${ex.platformVersion || "?"}`
+        + (isWebView ? "　★WebView製のブラウザです。PWAはインストールできません" : "")
+        + (!isChrome && !isWebView ? "　★Chromeではありません" : ""));
+  }
+
   // これが無いと他が全部揃っていてもインストールできない（最初にここで詰まった）
   const linked = document.querySelector('link[rel="manifest"]');
   say("manifest が文書に link されている", !!linked, linked ? linked.getAttribute("href") : "無い");
