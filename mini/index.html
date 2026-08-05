@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>インストール比較テスト</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#ffffff">
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; line-height: 1.8;
+         background: #fff; color: #111; }
+  #verdict { font-size: 20px; font-weight: 700; padding: 20px; border-radius: 12px;
+             background: #eee; margin: 20px 0; }
+  #verdict.yes { background: #d8f5d8; }
+  #verdict.no { background: #ffe0e0; }
+  button { font-size: 18px; padding: 16px 22px; width: 100%; border: 0; border-radius: 10px;
+           background: #1a73e8; color: #fff; }
+  button[disabled] { background: #ccc; color: #666; }
+  .note { color: #666; font-size: 14px; }
+</style>
+
+<h1>比較テスト</h1>
+<p class="note">
+  余計なものを一切入れていない、最小構成の PWA です。<br>
+  これがインストールできるかどうかで、原因が「アプリ側」か「端末側」かが分かります。
+</p>
+
+<div id="verdict">判定中…</div>
+<button id="go" disabled>インストール</button>
+<p class="note" id="detail"></p>
+
+<script>
+const v = document.getElementById("verdict");
+const btn = document.getElementById("go");
+const detail = document.getElementById("detail");
+let deferred = null;
+
+addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferred = e;
+  v.textContent = "この最小PWAはインストールできます";
+  v.className = "yes";
+  btn.disabled = false;
+});
+
+btn.onclick = async () => {
+  if (!deferred) return;
+  deferred.prompt();
+  const { outcome } = await deferred.userChoice;
+  detail.textContent = "結果: " + outcome;
+};
+
+navigator.serviceWorker.register("sw.js").then(async (reg) => {
+  await navigator.serviceWorker.ready;
+  detail.textContent = "Service Worker: " + reg.scope
+    + "　制御下: " + (navigator.serviceWorker.controller ? "はい" : "いいえ");
+  let sec = 0;
+  const t = setInterval(() => {
+    if (deferred) return clearInterval(t);
+    sec += 1;
+    v.textContent = `Chromeの通知を待っています… ${sec}秒`;
+    if (sec >= 30) {
+      clearInterval(t);
+      v.textContent = "最小構成でもインストールできません";
+      v.className = "no";
+      detail.textContent += "　→ アプリ側ではなく、この端末のChromeがインストールを行わない設定・状態です。";
+    }
+  }, 1000);
+}).catch((e) => { detail.textContent = "SW登録失敗: " + e.message; });
+</script>
+</html>
