@@ -3,6 +3,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>インストール診断</title>
+<!-- Chrome は「文書に link された」manifest しか見ない。fetch で読めても判定には使われない。 -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="theme-color" content="#14161a">
 <style>
   body { font-family: system-ui, sans-serif; background: #14161a; color: #e8eaed;
          margin: 0; padding: 16px; line-height: 1.7; }
@@ -51,6 +55,9 @@ btn.addEventListener("click", async () => {
 (async () => {
   const ua = navigator.userAgent;
   say("ブラウザ", null, ua);
+  // これが無いと他が全部揃っていてもインストールできない（最初にここで詰まった）
+  const linked = document.querySelector('link[rel="manifest"]');
+  say("manifest が文書に link されている", !!linked, linked ? linked.getAttribute("href") : "無い");
   // アプリ内ブラウザ（LINE/X/Instagram等）は仕様上インストールできない
   const inApp = /(FBAN|FBAV|Instagram|Line\/|Twitter|MicroMessenger)/i.test(ua);
   say("アプリ内ブラウザではない", !inApp,
