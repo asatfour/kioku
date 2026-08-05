@@ -68,6 +68,7 @@ async function init() {
   makeFsrs();
   wireUI();
   setupInstall(); // beforeinstallprompt は起動直後に飛ぶので、描画より先に構える
+  setupPullToRefresh();
   await loadCollection();
   renderModeStrip();
   await showHome();
@@ -612,6 +613,87 @@ async function requestPersistence() {
   } catch {
     /* 対応していない端末では何もしない */
   }
+}
+
+// ------------------------------------------------ 引っ張って更新
+
+/**
+ * 画面を下に引っ張って更新する。
+ * ホーム画面に入れると display:standalone になり、Chrome 標準の引っ張り更新が効かなくなる
+ * （この画面は overscroll-behavior:contain でもある）ので、自前で用意する。
+ */
+function setupPullToRefresh() {
+  const el = $("#ptr");
+  const TRIGGER = 70;   // ここまで引いたら更新
+  const MAX = 110;      // それ以上は伸びない
+  let startY = 0;
+  let pulling = false;  // 引っ張りと判定済み
+  let tracking = false; // 指が触れていて、判定待ち
+  let dist = 0;
+  let busyNow = false;
+
+  const overlayOpen = () =>
+    !$("#ai-panel").classList.contains("hidden") || !$("#img-viewer").classList.contains("hidden");
+
+  const atTop = () => (window.scrollY || document.documentElement.scrollTop || 0) <= 0;
+
+  function place(d) {
+    el.style.transform = `translate(-50%, ${-48 + d}px) rotate(${d * 3}deg)`;
+    el.style.opacity = String(Math.min(1, d / 40));
+    el.classList.toggle("ready", d >= TRIGGER);
+  }
+
+  function reset(animate = true) {
+    el.classList.toggle("snap", animate);
+    el.classList.remove("ready", "spin");
+    el.style.transform = "translate(-50%, -48px)";
+    el.style.opacity = "0";
+    pulling = tracking = false;
+    dist = 0;
+  }
+
+  addEventListener("touchstart", (e) => {
+    if (busyNow || e.touches.length !== 1 || !atTop() || overlayOpen()) return;
+    startY = e.touches[0].clientY;
+    tracking = true;
+    pulling = false;
+    el.classList.remove("snap");
+  }, { passive: true });
+
+  // passive:false でないと引っ張り中のスクロールを止められない
+  addEventListener("touchmove", (e) => {
+    if (!tracking || busyNow) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy <= 0 || !atTop()) {      // 上方向＝ふつうのスクロール。手を出さない
+      if (!pulling) tracking = false;
+      return;
+    }
+    if (!pulling && dy < 8) return; // タップやわずかな揺れでは反応しない
+    pulling = true;
+    e.preventDefault();
+    dist = Math.min(MAX, dy * 0.5); // 指の動きより鈍く動かして「引っ張っている」感を出す
+    place(dist);
+  }, { passive: false });
+
+  const finish = async () => {
+    if (!pulling || busyNow) return reset();
+    if (dist < TRIGGER) return reset();
+
+    busyNow = true;
+    el.classList.add("snap", "spin");
+    el.style.transform = "translate(-50%, 16px)";
+    el.style.opacity = "1";
+    // 新しい版があれば拾ってから読み直す（ここが「更新」の本体）
+    try {
+      const reg = await navigator.serviceWorker?.getRegistration();
+      if (reg) await reg.update();
+    } catch {
+      /* 圏外などは無視して、そのまま読み直す */
+    }
+    location.reload();
+  };
+  addEventListener("touchend", finish, { passive: true });
+  addEventListener("touchcancel", () => reset(), { passive: true });
 }
 
 // ------------------------------------------------ インストールと更新

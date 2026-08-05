@@ -483,3 +483,22 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 .banner > span { flex: 1; min-width: 0; }   /* 長文で横に伸びないように */
 .banner.warn { border-left: 3px solid #e0a341; }
 .banner-x { flex: none; opacity: .6; }
+
+/* ------------------------------------------------ 引っ張って更新 */
+#ptr {
+  position: fixed; top: 0; left: 50%; z-index: 60;
+  /* 指の動きに合わせて動かすので、既定は画面の上に隠しておく */
+  transform: translate(-50%, -48px);
+  width: 34px; height: 34px; pointer-events: none; opacity: 0;
+  display: grid; place-items: center;
+  background: var(--bg-elev); border: 1px solid var(--line);
+  border-radius: 999px; box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+}
+#ptr.snap { transition: transform .22s ease, opacity .22s ease; }
+#ptr-ring {
+  width: 16px; height: 16px; border-radius: 999px;
+  border: 2px solid var(--accent-dim); border-top-color: var(--accent);
+}
+#ptr.ready #ptr-ring { border-color: var(--accent); border-top-color: var(--accent); }
+#ptr.spin #ptr-ring { animation: ptr-spin .7s linear infinite; }
+@keyframes ptr-spin { to { transform: rotate(360deg); } }
