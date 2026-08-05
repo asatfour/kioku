@@ -536,3 +536,6 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 /* ------------------------------------------------ デッキの削除 */
 .deck-del { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .deck-del .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 印だけに絞っているときは、押した状態が分かるようにする */
+#btn-only-flagged.on { background: var(--accent); color: #fff; border-color: var(--accent); }

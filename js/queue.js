@@ -204,6 +204,8 @@ export function buildQueue(opts) {
     shuffleSameDay = true,
     /** "position"（登録順） or "random" */
     newOrder = "position",
+    /** 印（🚩）を付けたカードだけに絞る */
+    onlyFlagged = false,
   } = opts;
 
   const deckSet = deckIds ? new Set(deckIds) : null;
@@ -218,6 +220,7 @@ export function buildQueue(opts) {
     // buried は取り込み時の真偽値、buriedUntil はこのアプリが同じ日の兄弟を伏せた時刻
     if (c.buried === true || (c.buriedUntil ?? 0) > now) continue;
     if (deckSet && !deckSet.has(c.did)) continue;
+    if (onlyFlagged && !c.flags) continue;
     const note = noteById.get(c.nid);
     if (!note) continue;
     const w = cardWeight(note, notetypeById.get(note.mid));

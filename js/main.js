@@ -4,7 +4,7 @@
 import * as store from "./store.js";
 import { readApkg, writeApkg, toStudyCard } from "./apkg.js";
 import { Fsrs, State, Rating, humanInterval, DEFAULT_PARAMETERS } from "./fsrs.js";
-import { renderCard, resolveMedia } from "./render.js";
+import { renderCard, resolveMedia, stripHtml } from "./render.js";
 import { buildQueue, DEFAULT_MODES, todayStats, forecast, dayStart, dayEnd } from "./queue.js";
 import { askAI, quickPrompts, buildContext } from "./ai.js";
 
@@ -35,6 +35,8 @@ const app = {
   todayCounts: { new: 0, review: 0 },
   /** {一番上のデッキ名: 今日出した新規枚数} */
   todayNewByDeck: {},
+  /** 印を付けたカードだけに絞って学習する */
+  onlyFlagged: false,
 };
 
 const DEFAULT_SETTINGS = {
@@ -164,6 +166,11 @@ async function showHome() {
     : `今日の正答率 ${(st.retention * 100).toFixed(0)}%・所要 ${Math.round(st.timeMs / 60000)}分`;
 
   renderDeckList();
+  const flagged = app.cards.filter((c) => c.flags && !c.suspended).length;
+  const fb = $("#btn-only-flagged");
+  fb.classList.toggle("on", app.onlyFlagged);
+  fb.classList.toggle("hidden", flagged === 0 && !app.onlyFlagged);
+  fb.textContent = app.onlyFlagged ? `🚩 解除` : `🚩 ${flagged}`;
   $("#btn-study-all").textContent = q.counts.total
     ? `学習をはじめる（${q.counts.total}枚）`
     : "今日のぶんは終わりました";
@@ -208,6 +215,7 @@ function currentQueue() {
     todayNewByDeck: app.todayNewByDeck,
     shuffleSameDay: app.settings.shuffleSameDay,
     newOrder: app.settings.newOrder,
+    onlyFlagged: app.onlyFlagged,
   });
 }
 
@@ -646,7 +654,7 @@ function applyLeech(next, before, rating) {
   }
   if (app.settings.leechAction === "suspend") {
     next.suspended = true;
-    return `${th}回まちがえたので、このカードは出題を止めました（設定→データで戻せます）`;
+    return `${th}回まちがえたので出題を止めました（設定→「保留中のカード」で戻せます）`;
   }
   return `${th}回まちがえています。覚え方を変えてみてください`;
 }
@@ -1228,6 +1236,7 @@ function showSettings() {
   $("#set-leech-action").value = app.settings.leechAction ?? "suspend";
   renderDeckLimitEditor();
   renderDeckDeleteList();
+  renderSuspendedList();
   refreshBackupBanner();
   requestPersistence();
 
@@ -1287,6 +1296,56 @@ async function saveSettings() {
   app.settings.modeId = app.modeId;
   await store.setMeta("settings", app.settings);
   makeFsrs();
+}
+
+// ------------------------------------------------ 保留の解除
+
+/** 保留カードの見出し文（問題文の先頭）を作る */
+function cardLabel(card) {
+  const note = app.notes.get(card.nid);
+  const text = stripHtml(note?.fields?.[0] ?? "").replace(/\s+/g, " ").trim();
+  return text.slice(0, 60) || "(空のカード)";
+}
+
+function renderSuspendedList() {
+  const el = $("#suspended-list");
+  const all = $("#btn-unsuspend-all");
+  if (!el) return;
+  const list = app.cards.filter((c) => c.suspended);
+  all.classList.toggle("hidden", list.length === 0);
+  if (!list.length) {
+    el.innerHTML = `<p class="hint">保留中のカードはありません。</p>`;
+    return;
+  }
+  el.innerHTML =
+    `<p class="hint">${list.length} 枚あります。${list.length > 50 ? "先頭50枚を出しています。" : ""}</p>` +
+    list
+      .slice(0, 50)
+      .map(
+        (c) => `<div class="deck-del">
+          <span class="name">${escapeHtml(cardLabel(c))}</span>
+          ${c.isLeech ? `<span class="muted">${c.lapses ?? 0}回</span>` : ""}
+          <button class="btn small" data-unsuspend="${c.id}">解除</button>
+        </div>`
+      )
+      .join("");
+}
+
+async function unsuspend(cards) {
+  for (const c of cards) {
+    const next = { ...c, suspended: false, isLeech: false };
+    const i = app.cards.findIndex((x) => x.id === c.id);
+    if (i >= 0) app.cards[i] = next;
+    await store.put("cards", next);
+    // leech タグも外す（また間違えればしきい値で付き直す）
+    const note = app.notes.get(c.nid);
+    if (note?.tags?.includes("leech")) {
+      note.tags = note.tags.filter((t) => t !== "leech");
+      await store.put("notes", note);
+    }
+  }
+  renderSuspendedList();
+  toast(`${cards.length} 枚を解除しました`);
 }
 
 // ------------------------------------------------ デッキの削除
@@ -1478,7 +1537,22 @@ function wireUI() {
   $("#btn-install-2").onclick = doInstall;
   $("#btn-backup-now").onclick = exportAll;
   $("#btn-collapse-all").onclick = toggleAllDecks;
+  $("#btn-only-flagged").onclick = async () => {
+    app.onlyFlagged = !app.onlyFlagged;
+    app.selectedDeckIds = null;
+    await showHome();
+  };
   $("#btn-resume").onclick = resumeSession;
+  $("#suspended-list").onclick = (e) => {
+    const b = e.target.closest("[data-unsuspend]");
+    if (!b) return;
+    const c = app.cards.find((x) => x.id === Number(b.dataset.unsuspend));
+    if (c) unsuspend([c]);
+  };
+  $("#btn-unsuspend-all").onclick = () => {
+    const list = app.cards.filter((x) => x.suspended);
+    if (list.length && confirm(`保留中の ${list.length} 枚をすべて解除します。よろしいですか？`)) unsuspend(list);
+  };
   $("#deck-delete-list").onclick = (e) => {
     const b = e.target.closest("[data-del]");
     if (b) deleteDeck(b.dataset.del);

@@ -79,6 +79,7 @@
           読み込む
         </label>
         <button id="btn-collapse-all" class="btn small">たたむ</button>
+        <button id="btn-only-flagged" class="btn small" title="印を付けたカードだけ">🚩</button>
         <button id="btn-import-url" class="btn small">URL</button>
         <button id="btn-export" class="btn small">書き出す</button>
       </div>
@@ -290,6 +291,14 @@
     <button id="btn-install-2" class="btn" disabled>ホーム画面に追加</button>
     <p class="hint" id="install-note">この端末の対応状況を確認しています…</p>
     <p class="hint"><a href="LICENSES.txt" target="_blank" rel="noopener">同梱ライブラリのライセンス表示</a></p>
+  </section>
+
+  <section class="card-panel">
+    <h2>保留中のカード</h2>
+    <p class="hint">「⏸ 保留」で止めたカードと、まちがえすぎて自動で止まったカードです。
+      ここで解除すると、また出題されるようになります。</p>
+    <div id="suspended-list"></div>
+    <button id="btn-unsuspend-all" class="btn hidden">すべて解除する</button>
   </section>
 
   <section class="card-panel">
