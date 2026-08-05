@@ -90,12 +90,22 @@ export async function askAI({ prompt, context, settings }) {
   const { provider, key } = settings;
   const model = settings.model || DEFAULT_MODELS[provider];
 
-  if (provider === "none" || !key) {
-    // キーが無いときは外部サイトを開く（従来のカード裏ボタンと同じ逃げ道）
+  // 提供元を選んでいるのにキーだけ無い場合、勝手に別のサービスへ飛ばさない。
+  // （Gemini を選んだのに Claude が開く、という取り違えを防ぐ）
+  if (provider !== "none" && !key) {
+    const names = { gemini: "Gemini", claude: "Claude", openai: "OpenAI互換" };
+    throw new Error(
+      `${names[provider] ?? provider} のAPIキーが未設定です。`
+      + `設定 → AI で入れてください（Gemini は無料枠だけで使えます）。`
+    );
+  }
+
+  if (provider === "none") {
+    // 「使わない」を選んだときだけ、外部サイトに質問を持っていく
     const full = `${sys}\n\n# 質問\n${prompt}`;
     const url = "https://claude.ai/new?q=" + encodeURIComponent(full.slice(0, 1200));
     window.open(url, "_blank", "noopener");
-    return "APIキーが未設定のため、外部の Claude を新しいタブで開きました。設定画面でキーを入れると、この場で答えが出ます。";
+    return "外部の Claude を新しいタブで開きました。カードの内容がURLに載る点にご注意ください。";
   }
 
   if (provider === "gemini") {

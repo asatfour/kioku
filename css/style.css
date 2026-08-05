@@ -539,3 +539,31 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 
 /* 印だけに絞っているときは、押した状態が分かるようにする */
 #btn-only-flagged.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ------------------------------------------------ 検索 */
+#search-input { width: 100%; font-size: 16px; }  /* 16px 未満だと iOS が勝手に拡大する */
+.chk { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--fg-dim); }
+.hit { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.hit-q { font-size: 0.95rem; overflow-wrap: anywhere; }
+.hit-a, .hit-meta { font-size: 0.8rem; overflow-wrap: anywhere; }
+.hit-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.badge {
+  display: inline-block; margin-left: 6px; padding: 0 6px;
+  border: 1px solid var(--line); border-radius: 999px; font-size: 0.72rem;
+}
+
+/* ------------------------------------------------ カードを直す */
+#edit-fields textarea {
+  width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px; line-height: 1.5; background: var(--bg-card);
+  color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+}
+.field.edit-field { display: block; }
+.field.edit-field > span { display: block; margin-bottom: 4px; }
+
+/* ------------------------------------------------ 教科ごとの進み具合 */
+.deck-stat { margin: 0.7rem 0; }
+.deck-stat-head { display: flex; gap: 8px; font-size: 0.85rem; }
+.deck-stat-head .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stack { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--line); margin-top: 4px; }
+.stack > div { height: 100%; }

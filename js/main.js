@@ -135,6 +135,7 @@ async function loadCollection() {
 function show(viewId) {
   $$(".view").forEach((v) => v.classList.toggle("hidden", v.id !== viewId));
   $("#ai-panel").classList.add("hidden");
+  $("#edit-panel").classList.add("hidden");
   window.scrollTo(0, 0);
 }
 
@@ -1196,7 +1197,7 @@ async function showStats() {
     </div>
     <div class="card-panel" style="margin-top:1rem">
       <h2>これから7日の予定</h2>
-      <div class="bars">${fc.map((v) => `<div class="b" style="height:${(v / max) * 100}%"><span>${v || ""}</span></div>`).join("")}</div>
+      <div class="bars" id="forecast-bars">${fc.map((v) => `<div class="b" style="height:${(v / max) * 100}%"><span>${v || ""}</span></div>`).join("")}</div>
       <div class="bar-labels">${["今日", "明日", "3日", "4日", "5日", "6日", "7日"].map((l) => `<div>${l}</div>`).join("")}</div>
     </div>
     <div class="card-panel">
@@ -1206,7 +1207,85 @@ async function showStats() {
         <div class="stat"><div class="v" style="color:var(--warn)">${young}</div><div class="k">育成中</div></div>
         <div class="stat"><div class="v" style="color:var(--accent)">${fresh}</div><div class="k">未学習</div></div>
       </div>
-    </div>`;
+    </div>`
+    + historyHtml(rev)
+    + byDeckHtml();
+}
+
+/** 直近14日の「やった枚数」と「正答率」。続いているか、崩れていないかを見る。 */
+function historyHtml(rev) {
+  const days = 14;
+  const start = dayStart(Date.now(), app.settings.rolloverHour) - (days - 1) * 86400000;
+  const buckets = Array.from({ length: days }, () => ({ n: 0, again: 0 }));
+  for (const r of rev) {
+    const i = Math.floor((r.reviewedAt - start) / 86400000);
+    if (i < 0 || i >= days) continue;
+    buckets[i].n++;
+    if (r.rating === 1) buckets[i].again++;
+  }
+  const max = Math.max(1, ...buckets.map((b) => b.n));
+  const doneDays = buckets.filter((b) => b.n > 0).length;
+  const totalN = buckets.reduce((s, b) => s + b.n, 0);
+  const totalAgain = buckets.reduce((s, b) => s + b.again, 0);
+  const rate = totalN ? (1 - totalAgain / totalN) * 100 : null;
+
+  const bars = buckets
+    .map((b, i) => {
+      const d = new Date(start + i * 86400000);
+      const acc = b.n ? Math.round((1 - b.again / b.n) * 100) : null;
+      const color = acc == null ? "var(--line)" : acc >= 85 ? "var(--good)" : acc >= 70 ? "var(--warn)" : "var(--bad, #e06c6c)";
+      return `<div class="b" style="height:${(b.n / max) * 100}%;background:${color}"
+                title="${d.getMonth() + 1}/${d.getDate()} ${b.n}枚 ${acc == null ? "" : acc + "%"}">
+                <span>${b.n || ""}</span></div>`;
+    })
+    .join("");
+
+  return `<div class="card-panel">
+    <h2>この2週間</h2>
+    <div class="stat-grid">
+      <div class="stat"><div class="v">${doneDays}/${days}</div><div class="k">学習した日数</div></div>
+      <div class="stat"><div class="v">${totalN}</div><div class="k">のべ枚数</div></div>
+      <div class="stat"><div class="v">${rate == null ? "—" : rate.toFixed(0) + "%"}</div><div class="k">正答率</div></div>
+    </div>
+    <div class="bars" id="history-bars">${bars}</div>
+    <p class="hint">棒の高さは枚数、色は正答率（緑85%以上・黄70%以上・赤それ未満）。
+      赤が続くときは1日の新規枚数を減らすと落ち着きます。</p>
+  </div>`;
+}
+
+/** 教科ごとの進み具合。どこが手薄かを一目で分かるようにする。 */
+function byDeckHtml() {
+  const tops = [...new Set(app.decks.map((d) => d.name.split("::")[0]))];
+  const rows = tops
+    .map((name) => {
+      const cards = app.cards.filter((c) => topDeckName(c.did) === name && !c.suspended);
+      if (!cards.length) return "";
+      const mature = cards.filter((c) => (c.stability ?? 0) >= 21).length;
+      const young = cards.filter((c) => c.state === State.Review && (c.stability ?? 0) < 21).length;
+      const learn = cards.filter((c) => c.state === State.Learning || c.state === State.Relearning).length;
+      const fresh = cards.filter((c) => c.state === State.New).length;
+      const t = cards.length;
+      const pct = (v) => (v / t) * 100;
+      return `<div class="deck-stat">
+        <div class="deck-stat-head">
+          <span class="name">${escapeHtml(name)}</span>
+          <span class="muted">${Math.round(pct(mature))}% 定着 / ${t}枚</span>
+        </div>
+        <div class="stack">
+          <div style="width:${pct(mature)}%;background:var(--good)" title="定着 ${mature}"></div>
+          <div style="width:${pct(young)}%;background:var(--warn)" title="育成中 ${young}"></div>
+          <div style="width:${pct(learn)}%;background:var(--accent)" title="学習中 ${learn}"></div>
+          <div style="width:${pct(fresh)}%;background:var(--line)" title="未学習 ${fresh}"></div>
+        </div>
+      </div>`;
+    })
+    .join("");
+  if (!rows) return "";
+  return `<div class="card-panel">
+    <h2>教科ごとの進み具合</h2>
+    ${rows}
+    <p class="hint">緑＝定着（21日以上あけても覚えている）／黄＝育成中／青＝学習中／灰＝まだ出していない。</p>
+  </div>`;
 }
 
 // ---------------------------------------------------------------- 設定
@@ -1296,6 +1375,124 @@ async function saveSettings() {
   app.settings.modeId = app.modeId;
   await store.setMeta("settings", app.settings);
   makeFsrs();
+}
+
+// ------------------------------------------------ 検索
+
+function showSearch() {
+  show("view-search");
+  $("#search-input").focus();
+  runSearch();
+}
+
+/** 問題文・答え・タグ・デッキ名から探す。空白区切りは「すべて含む」扱い。 */
+function runSearch() {
+  const raw = $("#search-input").value.trim();
+  const words = raw.split(/\s+/).filter(Boolean).map((w) => w.toLowerCase());
+  const withSusp = $("#search-suspended").checked;
+  const onlyFlag = $("#search-flagged").checked;
+  const deckName = new Map(app.decks.map((d) => [d.id, d.name]));
+
+  const hits = [];
+  for (const c of app.cards) {
+    if (!withSusp && c.suspended) continue;
+    if (onlyFlag && !c.flags) continue;
+    const note = app.notes.get(c.nid);
+    if (!note) continue;
+    const hay = (
+      stripHtml(note.fields.join(" ")) + " " + note.tags.join(" ") + " " + (deckName.get(c.did) ?? "")
+    ).toLowerCase();
+    if (words.length && !words.every((w) => hay.includes(w))) continue;
+    // 件数は必ず全件数える。表示だけ絞る（数と一覧が食い違うと判断を誤らせる）
+    hits.push({ card: c, note, deck: deckName.get(c.did) ?? "" });
+  }
+
+  const LIMIT = 300;
+  const shown = Math.min(hits.length, LIMIT);
+  const tail = hits.length > LIMIT ? `（多いので先頭${LIMIT}枚を表示）` : "";
+  $("#search-meta").textContent = words.length
+    ? `${hits.length} 枚 見つかりました${tail}`
+    : `${hits.length} 枚${tail}　文字を入れると絞り込めます`;
+
+  $("#search-results").innerHTML = hits
+    .slice(0, LIMIT)
+    .map((h) => {
+      const q = stripHtml(h.note.fields[0] ?? "").replace(/\s+/g, " ").trim().slice(0, 90);
+      const a = stripHtml(h.note.fields[1] ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+      const badges =
+        (h.card.suspended ? `<span class="badge">保留</span>` : "") +
+        (h.card.flags ? `<span class="badge flag">🚩</span>` : "") +
+        (h.card.lapses ? `<span class="badge">${h.card.lapses}回</span>` : "");
+      return `<div class="hit" data-cid="${h.card.id}">
+        <div class="hit-q">${escapeHtml(q) || "(空)"}</div>
+        <div class="hit-a muted">${escapeHtml(a)}</div>
+        <div class="hit-meta muted">${escapeHtml(h.deck.split("::").pop())}${badges}</div>
+        <div class="hit-actions">
+          <button class="btn small" data-act="edit">直す</button>
+          <button class="btn small" data-act="flag">${h.card.flags ? "印を外す" : "印"}</button>
+          <button class="btn small" data-act="susp">${h.card.suspended ? "保留を解除" : "保留"}</button>
+          <button class="btn small" data-act="study">これだけ学習</button>
+        </div>
+      </div>`;
+    })
+    .join("");
+}
+
+async function searchAction(cardId, act) {
+  const i = app.cards.findIndex((c) => c.id === cardId);
+  if (i < 0) return;
+  const c = app.cards[i];
+  if (act === "edit") return openEditor(app.notes.get(c.nid));
+  if (act === "flag" || act === "susp") {
+    const next = act === "flag"
+      ? { ...c, flags: c.flags ? 0 : 1 }
+      : { ...c, suspended: !c.suspended, isLeech: c.suspended ? false : c.isLeech };
+    app.cards[i] = next;
+    await store.put("cards", next);
+    runSearch();
+    return;
+  }
+  if (act === "study") {
+    // 見つけたカードを1枚だけ、その場で出す（期限や上限は無視する）
+    app.queue = [c];
+    app.qIndex = 0;
+    enterStudy();
+    await nextCard();
+  }
+}
+
+// ------------------------------------------------ カードを直す
+
+let editingNote = null;
+
+function openEditor(note) {
+  if (!note) return toast("このカードの問題が見つかりません");
+  editingNote = note;
+  const nt = app.notetypes.get(note.mid);
+  $("#edit-fields").innerHTML = (nt?.fields ?? []).
+    map((f, i) => `<label class="field edit-field">
+      <span>${escapeHtml(f.name)}</span>
+      <textarea data-fi="${i}" rows="4"></textarea>
+    </label>`).join("");
+  $$("#edit-fields textarea").forEach((t) => {
+    t.value = note.fields[Number(t.dataset.fi)] ?? "";
+  });
+  $("#edit-panel").classList.remove("hidden");
+}
+
+async function saveEdit() {
+  if (!editingNote) return;
+  const fields = [...editingNote.fields];
+  for (const t of $$("#edit-fields textarea")) fields[Number(t.dataset.fi)] = t.value;
+  const next = { ...editingNote, fields, mod: Math.floor(Date.now() / 1000) };
+  app.notes.set(next.id, next);
+  await store.put("notes", next);
+  editingNote = next;
+  $("#edit-panel").classList.add("hidden");
+  toast("直しました");
+  // いま出しているカードなら描き直す
+  if (app.current && app.current.nid === next.id) await drawCard(app.revealed);
+  if (!$("#view-search").classList.contains("hidden")) runSearch();
 }
 
 // ------------------------------------------------ 保留の解除
@@ -1537,6 +1734,25 @@ function wireUI() {
   $("#btn-install-2").onclick = doInstall;
   $("#btn-backup-now").onclick = exportAll;
   $("#btn-collapse-all").onclick = toggleAllDecks;
+  $("#btn-search").onclick = showSearch;
+  let searchTimer = null;
+  $("#search-input").oninput = () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(runSearch, 180); // 打つたびに全件走らせない
+  };
+  $("#search-suspended").onchange = runSearch;
+  $("#search-flagged").onchange = runSearch;
+  $("#search-results").onclick = (e) => {
+    const b = e.target.closest("[data-act]");
+    if (!b) return;
+    const hit = b.closest(".hit");
+    searchAction(Number(hit.dataset.cid), b.dataset.act);
+  };
+  $("#btn-edit").onclick = () => openEditor(app.notes.get(app.current?.nid));
+  $("#edit-close").onclick = () => $("#edit-panel").classList.add("hidden");
+  $("#edit-save").onclick = saveEdit;
+  $("#edit-revert").onclick = () => openEditor(editingNote);
+
   $("#btn-only-flagged").onclick = async () => {
     app.onlyFlagged = !app.onlyFlagged;
     app.selectedDeckIds = null;

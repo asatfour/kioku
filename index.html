@@ -19,6 +19,7 @@
 <header id="topbar">
   <button id="btn-home" class="icon-btn" title="ホーム">🏠</button>
   <div id="mode-strip"></div>
+  <button id="btn-search" class="icon-btn" title="検索">🔍</button>
   <button id="btn-stats" class="icon-btn" title="統計">📊</button>
   <button id="btn-settings" class="icon-btn" title="設定">⚙️</button>
 </header>
@@ -121,6 +122,7 @@
 
   <div id="study-tools">
     <button id="btn-ai" class="tool">🤖 AIに聞く</button>
+    <button id="btn-edit" class="tool">✏️ 直す</button>
     <button id="btn-undo" class="tool">↩ 取り消し</button>
     <button id="btn-suspend" class="tool">⏸ 保留</button>
     <button id="btn-flag" class="tool">🚩 印</button>
@@ -147,6 +149,37 @@
     <button class="btn primary" type="submit">送る</button>
   </form>
   <p id="ai-status" class="muted"></p>
+</aside>
+
+<!-- ===================== 検索 ===================== -->
+<main id="view-search" class="view hidden">
+  <h1>検索</h1>
+  <label class="field">
+    <input type="search" id="search-input" placeholder="問題文・答え・タグで探す" autocomplete="off">
+  </label>
+  <div class="row-actions">
+    <label class="chk"><input type="checkbox" id="search-suspended"> 保留も含める</label>
+    <label class="chk"><input type="checkbox" id="search-flagged"> 印だけ</label>
+  </div>
+  <p id="search-meta" class="hint"></p>
+  <div id="search-results"></div>
+</main>
+
+<!-- ===================== カードを直す ===================== -->
+<aside id="edit-panel" class="panel hidden">
+  <div class="panel-head">
+    <h2>✏️ カードを直す</h2>
+    <button id="edit-close" class="icon-btn">✕</button>
+  </div>
+  <div id="edit-fields"></div>
+  <p class="hint">
+    書式（HTML）のまま直します。<code>&lt;img&gt;</code> や数式の記号を消すと表示が崩れるので、
+    直したい文字だけ触ってください。書き出した .apkg にも反映されます。
+  </p>
+  <div class="row-actions">
+    <button id="edit-save" class="btn primary">保存する</button>
+    <button id="edit-revert" class="btn">元に戻す</button>
+  </div>
 </aside>
 
 <!-- ===================== 統計 ===================== -->
@@ -252,7 +285,7 @@
         <option value="gemini">Gemini（無料枠あり）</option>
         <option value="claude">Claude</option>
         <option value="openai">OpenAI互換</option>
-        <option value="none">使わない（外部サイトを開く）</option>
+        <option value="none">アプリ内では使わない（Claudeのサイトを開く）</option>
       </select>
     </label>
     <label class="field"><span>APIキー</span><input type="password" id="set-ai-key" placeholder="この端末にだけ保存されます"></label>
