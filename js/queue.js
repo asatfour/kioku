@@ -66,6 +66,47 @@ export const DEFAULT_MODES = [
   },
 ];
 
+/**
+ * 日ごとに変わるが、同じ日なら何度呼んでも同じ並びになる乱数。
+ * 毎回ばらばらだと、画面を開き直すたびに順番が変わって落ち着かない。
+ */
+function seededShuffle(arr, seed) {
+  let s = seed >>> 0;
+  const rnd = () => {
+    s += 0x6d2b79f5;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/** 同じ日に期限が来るカードどうしだけ入れ替える（期限の前後は崩さない） */
+function shuffleWithinDay(list, seed, rolloverHour) {
+  const groups = new Map();
+  for (const c of list) {
+    const k = Math.floor(dayStart(c.due, rolloverHour) / DAY_MS);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(c);
+  }
+  const out = [];
+  for (const k of [...groups.keys()].sort((a, b) => a - b)) {
+    out.push(...seededShuffle(groups.get(k), seed + k));
+  }
+  return out;
+}
+
+/** そのカードが属する一番上のデッキ名（「沖縄県 教職・一般教養 2026::1 教職教養::…」→ 先頭） */
+function topDeckOf(card, deckNameById) {
+  const name = deckNameById?.get(card.did);
+  return name ? name.split("::")[0] : "";
+}
+
 /** カードが持つ「見た目の重さ」を測る（モードの判定に使う） */
 export function cardWeight(note, notetype) {
   const text = note.fields.join(" ");
@@ -105,6 +146,44 @@ function matchesFilter(card, weight, filter) {
  *  todayCounts : {new: 今日出した新規枚数, review: 今日した復習枚数}
  *  rolloverHour
  */
+/**
+ * 新規カードを、デッキごとの上限を守りつつ、デッキ横断で均等に配る。
+ * 一番上のデッキ（教科）単位で順番に1枚ずつ取っていく。
+ */
+function pickFreshFairly(fresh, { newLimit, deckNameById, deckNewLimits, todayNewByDeck }) {
+  if (newLimit <= 0) return [];
+  if (!deckNameById || deckNameById.size === 0) return fresh.slice(0, newLimit);
+
+  const buckets = new Map(); // 一番上のデッキ名 → その順で並んだ新規カード
+  for (const c of fresh) {
+    const top = topDeckOf(c, deckNameById);
+    if (!buckets.has(top)) buckets.set(top, []);
+    buckets.get(top).push(c);
+  }
+  // デッキごとの残り枠（未設定なら無制限）
+  const room = new Map();
+  for (const top of buckets.keys()) {
+    const cap = deckNewLimits?.[top];
+    room.set(top, cap == null ? Infinity : Math.max(0, cap - (todayNewByDeck?.[top] ?? 0)));
+  }
+
+  const out = [];
+  const keys = [...buckets.keys()];
+  let progressed = true;
+  while (out.length < newLimit && progressed) {
+    progressed = false;
+    for (const k of keys) {
+      if (out.length >= newLimit) break;
+      const b = buckets.get(k);
+      if (!b.length || room.get(k) <= 0) continue;
+      out.push(b.shift());
+      room.set(k, room.get(k) - 1);
+      progressed = true;
+    }
+  }
+  return out;
+}
+
 export function buildQueue(opts) {
   const {
     cards,
@@ -115,6 +194,16 @@ export function buildQueue(opts) {
     now = Date.now(),
     todayCounts = { new: 0, review: 0 },
     rolloverHour = 4,
+    /** did → デッキ名。デッキごとの配分に使う */
+    deckNameById = null,
+    /** {一番上のデッキ名: 1日の新規上限} */
+    deckNewLimits = null,
+    /** {一番上のデッキ名: 今日すでに出した新規枚数} */
+    todayNewByDeck = null,
+    /** 同じ期限のカードを日替わりで入れ替える */
+    shuffleSameDay = true,
+    /** "position"（登録順） or "random" */
+    newOrder = "position",
   } = opts;
 
   const deckSet = deckIds ? new Set(deckIds) : null;
@@ -125,7 +214,9 @@ export function buildQueue(opts) {
   const fresh = [];
 
   for (const c of cards) {
-    if (c.suspended || c.buried) continue;
+    if (c.suspended) continue;
+    // buried は取り込み時の真偽値、buriedUntil はこのアプリが同じ日の兄弟を伏せた時刻
+    if (c.buried === true || (c.buriedUntil ?? 0) > now) continue;
     if (deckSet && !deckSet.has(c.did)) continue;
     const note = noteById.get(c.nid);
     if (!note) continue;
@@ -155,13 +246,30 @@ export function buildQueue(opts) {
   review.sort(sorter);
   fresh.sort((a, b) => (a.newPos ?? 0) - (b.newPos ?? 0));
 
+  // 同じ期限のカードが毎日同じ順で出ると、順番そのものを手がかりに思い出してしまう。
+  // 期限の前後は崩さず、同じ日の中だけ日替わりで入れ替える。
+  const daySeed = Math.floor(dayStart(now, rolloverHour) / DAY_MS);
+  if (shuffleSameDay && mode.order !== "random") {
+    const shuffled = shuffleWithinDay(review, daySeed, rolloverHour);
+    review.length = 0;
+    review.push(...shuffled);
+  }
+  if (newOrder === "random") seededShuffle(fresh, daySeed + 7919);
+
+  // 今日すでに出したぶんを引く（渡されなければ 1回あたりの上限として働く）
   const newLimit = Math.max(0, (mode.limits?.new ?? 20) - todayCounts.new);
   const revLimit = Math.max(0, (mode.limits?.review ?? 200) - todayCounts.review);
+
+  // 新規はデッキごとの上限を先にかけ、残りをデッキ横断で均等に配る。
+  // 登録順だけで切ると、片方のデッキばかり進んでもう片方が何日も出ない。
+  const pickedFresh = pickFreshFairly(fresh, {
+    newLimit, deckNameById, deckNewLimits, todayNewByDeck,
+  });
 
   const picked = {
     learning,
     review: review.slice(0, revLimit),
-    fresh: fresh.slice(0, newLimit),
+    fresh: pickedFresh,
   };
 
   // 出題順に混ぜる: 期限が来た学習カード → 復習 → 新規（新規は復習の間に散らす）

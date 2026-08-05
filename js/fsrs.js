@@ -181,6 +181,7 @@ export class Fsrs {
    */
   review(card, rating, nowMs = Date.now(), reviewDurationMs = null) {
     const c = { ...card };
+    c.reps = (c.reps ?? 0) + 1; // 何回出したか。統計と書き出しで使う
     const daysSince =
       c.lastReview != null ? Math.floor((nowMs - c.lastReview) / DAY_MS) : null;
     const sameDay = daysSince != null && daysSince < 1;
@@ -259,6 +260,10 @@ export class Fsrs {
         c.stability = this._nextStability(c.difficulty, c.stability, r, rating);
       }
       c.difficulty = this._nextDifficulty(c.difficulty, rating);
+
+      // 「覚えたはずが出てこなかった」回数。本家と同じく Review を Again にしたときだけ数える。
+      // FSRS の計算には使わないが、弱点の抽出と手こずりカードの判定がこれに乗っている。
+      if (rating === Rating.Again) c.lapses = (c.lapses ?? 0) + 1;
 
       if (rating === Rating.Again) {
         if (this.relearningSteps.length === 0) {

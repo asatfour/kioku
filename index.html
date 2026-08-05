@@ -190,6 +190,39 @@
   </section>
 
   <section class="card-panel">
+    <h2>出題の調整</h2>
+    <label class="field"><span>新規カードの順番</span>
+      <select id="set-neworder">
+        <option value="position">登録順（デッキの並びどおり）</option>
+        <option value="random">日替わりでばらばら</option>
+      </select>
+    </label>
+    <label class="field"><span>同じ期限のカードを日替わりで入れ替える</span><input type="checkbox" id="set-shuffleday"></label>
+    <p class="hint">順番そのものを手がかりに思い出してしまうのを防ぎます。期限の前後は崩しません。</p>
+
+    <label class="field"><span>同じ問題から作られた別カードを、その日はもう出さない</span><input type="checkbox" id="set-burysiblings"></label>
+
+    <label class="field"><span>手こずっているカードの判定</span>
+      <select id="set-leech-th">
+        <option value="0">使わない</option>
+        <option value="4">4回まちがえたら</option>
+        <option value="6">6回まちがえたら</option>
+        <option value="8">8回まちがえたら</option>
+        <option value="12">12回まちがえたら</option>
+      </select>
+    </label>
+    <label class="field"><span>そのときどうする</span>
+      <select id="set-leech-action">
+        <option value="suspend">出題を止める</option>
+        <option value="tag">印を付けるだけ（出し続ける）</option>
+      </select>
+    </label>
+    <p class="hint">何度も間違えるカードは覚え方が合っていないことが多く、放っておくと毎日出続けます。</p>
+
+    <div id="deck-limit-editor"></div>
+  </section>
+
+  <section class="card-panel">
     <h2>場面別モード</h2>
     <p class="hint">その場でできることだけを出します。枚数と条件を変えられます。</p>
     <div id="mode-editor"></div>

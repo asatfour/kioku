@@ -513,3 +513,8 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 }
 .twist.shut { transform: rotate(-90deg); }
 .twist.empty { visibility: hidden; }   /* 場所だけ空けて名前の頭を揃える */
+
+/* ------------------------------------------------ 教科ごとの上限 */
+.sub { font-size: 0.95rem; margin: 1rem 0 0.2rem; color: var(--fg); }
+.field.deck-limit > span { flex: 1 1 10rem; font-size: 0.86rem; }
+.field.deck-limit input[type="number"] { flex: 0 0 6rem; }

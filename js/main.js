@@ -5,7 +5,7 @@ import * as store from "./store.js";
 import { readApkg, writeApkg, toStudyCard } from "./apkg.js";
 import { Fsrs, State, Rating, humanInterval, DEFAULT_PARAMETERS } from "./fsrs.js";
 import { renderCard, resolveMedia } from "./render.js";
-import { buildQueue, DEFAULT_MODES, todayStats, forecast, dayStart } from "./queue.js";
+import { buildQueue, DEFAULT_MODES, todayStats, forecast, dayStart, dayEnd } from "./queue.js";
 import { askAI, quickPrompts, buildContext } from "./ai.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -31,6 +31,10 @@ const app = {
   lastAnswer: null,
   fsrs: null,
   counts: { new: 0, learning: 0, review: 0 },
+  /** 今日すでに出した枚数。1日の上限を「1回の上限」にしないために持つ */
+  todayCounts: { new: 0, review: 0 },
+  /** {一番上のデッキ名: 今日出した新規枚数} */
+  todayNewByDeck: {},
 };
 
 const DEFAULT_SETTINGS = {
@@ -51,6 +55,18 @@ const DEFAULT_SETTINGS = {
   relearningSteps: [600],
   modes: DEFAULT_MODES,
   modeId: "desk",
+  /** 同じ期限のカードを日替わりで入れ替える（順番で覚えてしまうのを防ぐ） */
+  shuffleSameDay: true,
+  /** 新規の出す順。"position"=登録順 / "random"=日替わりでばらばら */
+  newOrder: "position",
+  /** 何回まちがえたら「手こずっているカード」として扱うか。0 で無効 */
+  leechThreshold: 8,
+  /** "suspend"=出題を止める / "tag"=印だけ付けて出し続ける */
+  leechAction: "suspend",
+  /** 同じノートの別カードを、その日はもう出さない */
+  burySiblings: true,
+  /** {一番上のデッキ名: 1日の新規上限}。未設定のデッキは全体の上限だけが効く */
+  deckNewLimits: {},
 };
 
 // ---------------------------------------------------------------- 起動
@@ -126,6 +142,7 @@ async function showHome() {
   await refreshBackupBanner();
   if (!has) return;
 
+  await refreshTodayCounts();
   const rev = await store.revlogSince(dayStart(Date.now(), app.settings.rolloverHour));
   const st = todayStats(rev, Date.now(), app.settings.rolloverHour);
   $("#today-date").textContent = new Date().toLocaleDateString("ja-JP", {
@@ -150,6 +167,28 @@ async function showHome() {
   $("#btn-study-all").disabled = q.counts.total === 0;
 }
 
+const deckNameById = () => new Map(app.decks.map((d) => [d.id, d.name]));
+const topDeckName = (did) => (app.decks.find((d) => d.id === did)?.name ?? "").split("::")[0];
+
+/**
+ * 今日すでに出した枚数を履歴から数え直す。
+ * これを渡さないと「1日の上限」が「1回の上限」になり、朝と夜で新規が二重に入る。
+ */
+async function refreshTodayCounts() {
+  const rev = await store.revlogSince(dayStart(Date.now(), app.settings.rolloverHour));
+  const cardById = new Map(app.cards.map((c) => [c.id, c]));
+  let fresh = 0;
+  const byDeck = {};
+  for (const r of rev) {
+    if (r.state !== State.New) continue; // 復習前の状態が New＝今日おろした新規
+    fresh++;
+    const top = topDeckName(cardById.get(r.cardId)?.did);
+    byDeck[top] = (byDeck[top] ?? 0) + 1;
+  }
+  app.todayCounts = { new: fresh, review: Math.max(0, rev.length - fresh) };
+  app.todayNewByDeck = byDeck;
+}
+
 function currentQueue() {
   const mode = app.modes.find((m) => m.id === app.modeId) || app.modes[1];
   return buildQueue({
@@ -160,6 +199,12 @@ function currentQueue() {
     mode,
     now: Date.now(),
     rolloverHour: app.settings.rolloverHour,
+    todayCounts: app.todayCounts,
+    deckNameById: deckNameById(),
+    deckNewLimits: app.settings.deckNewLimits,
+    todayNewByDeck: app.todayNewByDeck,
+    shuffleSameDay: app.settings.shuffleSameDay,
+    newOrder: app.settings.newOrder,
   });
 }
 
@@ -468,14 +513,28 @@ async function grade(rating) {
   const duration = now - app.shownAt;
   const { card: next, log } = app.fsrs.review(c, rating, now, duration);
 
-  app.lastAnswer = { before: { ...c }, after: next, index: app.qIndex };
+  app.lastAnswer = { before: { ...c }, after: next, index: app.qIndex, buried: [] };
   showUndoStrip(rating);
+
+  const leechMsg = applyLeech(next, c, rating);
 
   // 保存
   const idx = app.cards.findIndex((x) => x.id === c.id);
   if (idx >= 0) app.cards[idx] = next;
   await store.put("cards", next);
   await store.addRevlog({ ...log, cardId: c.id });
+
+  // 今日の枚数を持ち回す（1日の上限を効かせるため。履歴の読み直しはしない）
+  if (c.state === State.New) {
+    app.todayCounts.new++;
+    const top = topDeckName(c.did);
+    app.todayNewByDeck[top] = (app.todayNewByDeck[top] ?? 0) + 1;
+  } else {
+    app.todayCounts.review++;
+  }
+
+  await burySiblingsOf(c);
+  if (leechMsg) toast(leechMsg);
 
   // 学習中カードは同じセッションでもう一度出す
   app.qIndex++;
@@ -485,12 +544,66 @@ async function grade(rating) {
   await nextCard();
 }
 
+/**
+ * 何度も間違えるカードを拾う。
+ * 覚え方そのものが合っていないことが多く、放っておくと毎日出続けて時間を食う。
+ */
+function applyLeech(next, before, rating) {
+  const th = app.settings.leechThreshold ?? 0;
+  if (!th || rating !== Rating.Again) return null;
+  if ((next.lapses ?? 0) < th) return null;
+  // しきい値を跨いだ回だけ知らせる（以後は毎回言わない）
+  if ((before.lapses ?? 0) >= th) return null;
+
+  next.isLeech = true;
+  const note = app.notes.get(next.nid);
+  if (note && !note.tags.includes("leech")) {
+    note.tags = [...note.tags, "leech"];
+    store.put("notes", note).catch(() => {});
+  }
+  if (app.settings.leechAction === "suspend") {
+    next.suspended = true;
+    return `${th}回まちがえたので、このカードは出題を止めました（設定→データで戻せます）`;
+  }
+  return `${th}回まちがえています。覚え方を変えてみてください`;
+}
+
+/** 同じノートから作られた別のカードを、その日はもう出さない */
+async function burySiblingsOf(card) {
+  if (!app.settings.burySiblings) return;
+  const until = dayEnd(Date.now(), app.settings.rolloverHour);
+  const buried = [];
+  for (const s of app.cards) {
+    if (s.nid !== card.nid || s.id === card.id) continue;
+    if (s.suspended || (s.buriedUntil ?? 0) >= until) continue;
+    const nextS = { ...s, buriedUntil: until };
+    const i = app.cards.indexOf(s);
+    app.cards[i] = nextS;
+    await store.put("cards", nextS);
+    buried.push(s);
+  }
+  if (app.lastAnswer) app.lastAnswer.buried = buried;
+}
+
 async function undo() {
   if (!app.lastAnswer) return toast("取り消せる操作がありません");
-  const { before, index } = app.lastAnswer;
+  const { before, index, buried } = app.lastAnswer;
   const idx = app.cards.findIndex((x) => x.id === before.id);
   if (idx >= 0) app.cards[idx] = before;
   await store.put("cards", before);
+  // 伏せた兄弟カードも元に戻す（戻したのに出てこない、を防ぐ）
+  for (const s of buried ?? []) {
+    const i = app.cards.findIndex((x) => x.id === s.id);
+    if (i >= 0) app.cards[i] = s;
+    await store.put("cards", s);
+  }
+  if (before.state === State.New) {
+    app.todayCounts.new = Math.max(0, app.todayCounts.new - 1);
+    const top = topDeckName(before.did);
+    app.todayNewByDeck[top] = Math.max(0, (app.todayNewByDeck[top] ?? 1) - 1);
+  } else {
+    app.todayCounts.review = Math.max(0, app.todayCounts.review - 1);
+  }
   app.qIndex = index;
   app.queue[index] = before;
   app.lastAnswer = null;
@@ -762,10 +875,14 @@ function setupPullToRefresh() {
 
 let deferredInstall = null;
 
+/** matchMedia が無い実行環境（検証用のDOM実装など）でも落ちないようにする */
+const mediaMatches = (q) =>
+  typeof matchMedia === "function" ? matchMedia(q).matches : false;
+
 function setupInstall() {
   const note = $("#install-note");
   const btn2 = $("#btn-install-2");
-  const standalone = matchMedia("(display-mode: standalone)").matches;
+  const standalone = mediaMatches("(display-mode: standalone)");
 
   if (standalone) {
     if (note) note.textContent = "すでにアプリとして起動しています。";
@@ -934,6 +1051,12 @@ function showSettings() {
   $("#set-ai-model").value = s.model;
   $("#set-ai-base").value = s.base;
   $("#set-backup-days").value = String(backupDays());
+  $("#set-neworder").value = app.settings.newOrder ?? "position";
+  $("#set-shuffleday").checked = app.settings.shuffleSameDay !== false;
+  $("#set-burysiblings").checked = app.settings.burySiblings !== false;
+  $("#set-leech-th").value = String(app.settings.leechThreshold ?? 8);
+  $("#set-leech-action").value = app.settings.leechAction ?? "suspend";
+  renderDeckLimitEditor();
   refreshBackupBanner();
   requestPersistence();
 
@@ -962,6 +1085,17 @@ async function saveSettings() {
   app.settings.autoScrollToAnswer = $("#set-autoscroll").checked;
   app.settings.hideCardAILinks = $("#set-hideailinks").checked;
   app.settings.fontSize = Number($("#set-fontsize").value);
+  app.settings.newOrder = $("#set-neworder").value;
+  app.settings.shuffleSameDay = $("#set-shuffleday").checked;
+  app.settings.burySiblings = $("#set-burysiblings").checked;
+  app.settings.leechThreshold = Number($("#set-leech-th").value);
+  app.settings.leechAction = $("#set-leech-action").value;
+  const limits = {};
+  for (const inp of $$("#deck-limit-editor input[data-deck]")) {
+    const v = inp.value.trim();
+    if (v !== "") limits[inp.dataset.deck] = Math.max(0, Number(v));
+  }
+  app.settings.deckNewLimits = limits;
   app.modes = app.modes.map((m, i) => {
     const row = $(`.mode-row[data-i="${i}"]`);
     if (!row) return m;
@@ -981,6 +1115,33 @@ async function saveSettings() {
   app.settings.modeId = app.modeId;
   await store.setMeta("settings", app.settings);
   makeFsrs();
+}
+
+/** 教科（一番上のデッキ）ごとに1日の新規上限を決められるようにする */
+function renderDeckLimitEditor() {
+  const el = $("#deck-limit-editor");
+  if (!el) return;
+  const tops = [...new Set(app.decks.map((d) => d.name.split("::")[0]))]
+    .filter((n) => app.cards.some((c) => topDeckName(c.did) === n && c.state === State.New));
+  if (tops.length < 2) {
+    // 教科がひとつしか無いときは、全体の上限と同じ意味になるので出さない
+    el.innerHTML = "";
+    return;
+  }
+  const lim = app.settings.deckNewLimits || {};
+  el.innerHTML =
+    `<h3 class="sub">教科ごとの新規上限（1日）</h3>
+     <p class="hint">空欄なら制限なし。合計は上のモードの「新規/日」を超えません。
+       指定しなくても、複数の教科がある日は<strong>順番に1枚ずつ</strong>配ります。</p>` +
+    tops
+      .map(
+        (n) => `<label class="field deck-limit">
+        <span>${escapeHtml(n)}</span>
+        <input type="number" min="0" max="999" data-deck="${escapeHtml(n)}"
+               value="${lim[n] ?? ""}" placeholder="制限なし">
+      </label>`
+      )
+      .join("");
 }
 
 function renderModeStrip() {
