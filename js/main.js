@@ -75,6 +75,18 @@ const DEFAULT_SETTINGS = {
 
 // ---------------------------------------------------------------- 起動
 
+// 握りつぶされた失敗を必ず表に出す。
+// 保存できていないのに動いているように見えるのが、この種のアプリで一番たちが悪い。
+addEventListener("unhandledrejection", (e) => {
+  console.error(e.reason);
+  toast("処理に失敗しました: " + (e.reason?.message ?? e.reason));
+});
+addEventListener("error", (e) => {
+  if (!e.message) return;
+  console.error(e.error ?? e.message);
+  toast("エラーが起きました: " + e.message);
+});
+
 init().catch((e) => {
   console.error(e);
   toast("起動に失敗しました: " + e.message);
@@ -604,16 +616,23 @@ async function grade(rating) {
   const duration = now - app.shownAt;
   const { card: next, log } = app.fsrs.review(c, rating, now, duration);
 
-  app.lastAnswer = { before: { ...c }, after: next, index: app.qIndex, buried: [] };
-  showUndoStrip(rating);
-
   const leechMsg = applyLeech(next, c, rating);
 
-  // 保存
+  // 先に保存する。容量不足などで書けなかったときに「答えたのに記録されていない」を
+  // 黙って通さないため、画面を進める前に確定させる。
+  try {
+    await store.put("cards", next);
+    await store.addRevlog({ ...log, cardId: c.id });
+  } catch (e) {
+    console.error(e);
+    toast("保存できませんでした。この回答は記録されていません（空き容量をご確認ください）");
+    return; // 進めない。同じカードのまま留まる
+  }
+
+  app.lastAnswer = { before: { ...c }, after: next, index: app.qIndex, buried: [] };
+  showUndoStrip(rating);
   const idx = app.cards.findIndex((x) => x.id === c.id);
   if (idx >= 0) app.cards[idx] = next;
-  await store.put("cards", next);
-  await store.addRevlog({ ...log, cardId: c.id });
 
   // 今日の枚数を持ち回す（1日の上限を効かせるため。履歴の読み直しはしない）
   if (c.state === State.New) {

@@ -6,7 +6,7 @@
  * 理由: 全部 cache-first にすると、PC 側で直してもスマホに更新が永久に届かない。
  *       逆に全部 network-first にすると、起動のたびに 1MB 超を取りに行って遅い。
  */
-const CACHE = "kioku-v10";
+const CACHE = "kioku-v11";
 const ASSETS = [
   "./",
   "index.html",
