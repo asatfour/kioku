@@ -49,6 +49,28 @@ btn.onclick = async () => {
   detail.textContent = "結果: " + outcome;
 };
 
+// UA文字列は誰でも書き換えられるが、こちらはブラウザ本体が答える。
+// 本当に Chrome なのか、どの端末なのかをここで確定させる。
+(async () => {
+  const box = document.createElement("pre");
+  box.style.cssText = "white-space:pre-wrap;font-size:13px;background:#f2f2f2;padding:12px;border-radius:8px";
+  const d = navigator.userAgentData;
+  if (!d) {
+    box.textContent = "userAgentData なし\n→ Chrome 系ではない可能性が高いです（Firefox や一部のブラウザは持ちません）";
+  } else {
+    let extra = {};
+    try {
+      extra = await d.getHighEntropyValues(["fullVersionList", "platformVersion", "model", "architecture"]);
+    } catch (e) { extra = { error: String(e) }; }
+    box.textContent = JSON.stringify({
+      brands: d.brands, mobile: d.mobile, platform: d.platform,
+      platformVersion: extra.platformVersion, model: extra.model,
+      fullVersionList: extra.fullVersionList,
+    }, null, 1);
+  }
+  document.body.appendChild(box);
+})();
+
 navigator.serviceWorker.register("sw.js").then(async (reg) => {
   await navigator.serviceWorker.ready;
   detail.textContent = "Service Worker: " + reg.scope
