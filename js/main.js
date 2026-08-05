@@ -67,6 +67,8 @@ const DEFAULT_SETTINGS = {
   burySiblings: true,
   /** {一番上のデッキ名: 1日の新規上限}。未設定のデッキは全体の上限だけが効く */
   deckNewLimits: {},
+  /** 本番の日付（YYYY-MM-DD）。統計の逆算に使う */
+  examDate: null,
 };
 
 // ---------------------------------------------------------------- 起動
@@ -140,6 +142,7 @@ async function showHome() {
   $("#empty-state").classList.toggle("hidden", has);
   $("#home-body").classList.toggle("hidden", !has);
   await refreshBackupBanner();
+  await refreshResumeBanner();
   if (!has) return;
 
   await refreshTodayCounts();
@@ -326,12 +329,89 @@ function startStudy() {
     finishScreen(q);
     return;
   }
+  enterStudy();
+  saveSession();
+  nextCard();
+}
+
+function enterStudy() {
   show("view-study");
   $("#finished").classList.add("hidden");
   $("#card-area").classList.remove("hidden");
   $("#answer-bar").classList.remove("hidden");
   $("#study-tools").classList.remove("hidden");
-  nextCard();
+  $("#study-progress").classList.remove("hidden");
+  $("#study-progress-text").classList.remove("hidden");
+}
+
+// ------------------------------------------------ 中断と再開
+
+/**
+ * いまの並びと位置を残す。通学中に使う前提だと中断は日常なので、
+ * 開き直したときに最初からやり直しにならないようにする。
+ */
+function saveSession() {
+  store
+    .setMeta("session", {
+      ids: app.queue.map((c) => c.id),
+      qIndex: app.qIndex,
+      modeId: app.modeId,
+      deckIds: app.selectedDeckIds,
+      at: Date.now(),
+    })
+    .catch(() => {});
+}
+
+const clearSession = () => store.setMeta("session", null).catch(() => {});
+
+async function refreshResumeBanner() {
+  const el = $("#resume-banner");
+  if (!el || el.dataset.dismissed === "1") return;
+  const s = await store.getMeta("session", null);
+  const sameDay = s && s.at >= dayStart(Date.now(), app.settings.rolloverHour);
+  const left = s ? s.ids.length - s.qIndex : 0;
+  if (!s || !sameDay || left <= 0) {
+    el.classList.add("hidden");
+    return;
+  }
+  $("#resume-msg").textContent = `途中まで進めた学習が残っています（あと ${left} 枚）。`;
+  el.classList.remove("hidden");
+}
+
+async function resumeSession() {
+  const s = await store.getMeta("session", null);
+  if (!s) return toast("続きが見つかりませんでした");
+  const byId = new Map(app.cards.map((c) => [c.id, c]));
+  // 消えたカード・保留にしたカードは飛ばす（並びと位置は保つ）
+  const kept = [];
+  let idx = 0;
+  s.ids.forEach((id, i) => {
+    const c = byId.get(id);
+    if (!c || c.suspended) return;
+    if (i < s.qIndex) idx = kept.length + 1;
+    kept.push(c);
+  });
+  if (!kept.length || idx >= kept.length) {
+    await clearSession();
+    return toast("続きはもう残っていません");
+  }
+  app.modeId = s.modeId || app.modeId;
+  app.selectedDeckIds = s.deckIds ?? null;
+  app.queue = kept;
+  app.qIndex = idx;
+  $("#resume-banner").classList.add("hidden");
+  renderModeStrip();
+  enterStudy();
+  await nextCard();
+}
+
+/** 残り枚数を出す。分母は学習中カードの出し直しで増えることがある */
+function updateProgress() {
+  const total = app.queue.length;
+  const done = Math.min(app.qIndex, total);
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  $("#study-progress .bar").style.width = pct + "%";
+  $("#study-progress-text").textContent = total ? `${done + 1} / ${total} 枚目` : "";
 }
 
 function finishScreen(q) {
@@ -354,6 +434,7 @@ async function nextCard() {
       app.queue = q.cards;
       app.qIndex = 0;
     } else {
+      await clearSession(); // やり切ったので「続きから」は出さない
       await showHome();
       finishScreen(q);
       show("view-study");
@@ -363,6 +444,7 @@ async function nextCard() {
   app.current = app.queue[app.qIndex];
   app.revealed = false;
   app.shownAt = Date.now();
+  updateProgress();
   await drawCard(false);
 }
 
@@ -538,6 +620,7 @@ async function grade(rating) {
 
   // 学習中カードは同じセッションでもう一度出す
   app.qIndex++;
+  saveSession();
   if ((next.state === State.Learning || next.state === State.Relearning) && next.due <= now + 20 * 60000) {
     app.queue.splice(Math.min(app.qIndex + 2, app.queue.length), 0, next);
   }
@@ -947,12 +1030,53 @@ function toAnkiCard(c, crtMs) {
 
 // ---------------------------------------------------------------- AI
 
+/**
+ * AIとのやりとりはカードごとに残す。
+ * せっかく解説してもらっても消えていたら、次に同じカードが出たときにまた一から聞くことになる。
+ * 履歴はノート単位（表裏どちらのカードでも同じものが出る）で meta に持つ。
+ */
+const aiHistoryKey = (card) => `ai:${card.nid}`;
+const loadAIHistory = (card) => store.getMeta(aiHistoryKey(card), []);
+
+async function appendAIHistory(card, entry) {
+  const list = await loadAIHistory(card);
+  list.push(entry);
+  // 際限なく増えると書き出しも重くなるので、直近だけ残す
+  await store.setMeta(aiHistoryKey(card), list.slice(-20));
+}
+
 async function openAI() {
   if (!app.current) return;
   const panel = $("#ai-panel");
   panel.classList.remove("hidden");
   $("#ai-log").innerHTML = "";
   const ctx = buildContext(app.current, app.notes, app.notetypes, app.decks);
+
+  // 前に聞いた内容を先に出す
+  const past = await loadAIHistory(app.current);
+  if (past.length) {
+    const log = $("#ai-log");
+    log.insertAdjacentHTML(
+      "beforeend",
+      `<div class="ai-past-head">このカードで前に聞いた内容（${past.length}件）
+         <button id="ai-clear" class="btn small">消す</button></div>`
+    );
+    for (const e of past) {
+      log.insertAdjacentHTML(
+        "beforeend",
+        `<div class="ai-msg me old">${escapeHtml(e.q)}</div>
+         <div class="ai-msg ai old"></div>`
+      );
+      log.lastElementChild.textContent = e.a;
+    }
+    typeset(log);
+    $("#ai-clear").onclick = async () => {
+      await store.setMeta(aiHistoryKey(app.current), []);
+      log.innerHTML = "";
+      toast("このカードの記録を消しました");
+    };
+    log.scrollTop = log.scrollHeight;
+  }
   $("#ai-quick").innerHTML = quickPrompts()
     .map((p, i) => `<button data-i="${i}">${p.label}</button>`)
     .join("");
@@ -979,10 +1103,12 @@ async function sendAI(prompt, ctx) {
   log.appendChild(holder);
   log.scrollTop = log.scrollHeight;
   $("#ai-status").textContent = "考えています…";
+  const card = app.current;
   try {
     const answer = await askAI({ prompt, context: ctx, settings: aiSettings() });
     holder.textContent = answer;
     typeset(holder);
+    if (card) await appendAIHistory(card, { q: prompt, a: answer, at: Date.now() });
   } catch (e) {
     holder.textContent = "失敗しました: " + e.message;
   } finally {
@@ -998,6 +1124,49 @@ const aiSettings = () => ({
   base: localStorage.getItem("ai.base") || "",
 });
 
+/**
+ * 試験日からの逆算。
+ * 「1日の新規を何枚にするか」を勘で決めずに済むようにする。
+ */
+function examPlanHtml(remainingNew) {
+  const iso = app.settings.examDate;
+  if (!iso) {
+    return `<div class="card-panel">
+      <h2>試験までの見通し</h2>
+      <p class="hint">設定で試験日を入れると、
+        「この進度で全部に手が回るか」「1日何枚おろせばよいか」を出します。</p>
+    </div>`;
+  }
+  const days = Math.ceil((new Date(iso + "T00:00:00").getTime() - Date.now()) / 86400000);
+  if (days <= 0) {
+    return `<div class="card-panel"><h2>試験までの見通し</h2>
+      <p class="hint">試験日（${iso}）を過ぎています。設定で更新してください。</p></div>`;
+  }
+  const mode = app.modes.find((m) => m.id === app.modeId) || app.modes[1];
+  const perDay = mode.limits?.new ?? 0;
+  const daysNeeded = perDay > 0 ? Math.ceil(remainingNew / perDay) : Infinity;
+  const need = Math.ceil(remainingNew / days);
+  const inTime = daysNeeded <= days;
+
+  const verdict = !perDay
+    ? `いまのモードは新規を出さない設定です。未着手が <strong>${remainingNew}枚</strong> 残ります。`
+    : inTime
+      ? `いまの <strong>${perDay}枚/日</strong> なら、<strong>あと${daysNeeded}日</strong>で全部に一度は目を通せます（${days - daysNeeded}日の余裕）。`
+      : `いまの <strong>${perDay}枚/日</strong> だと <strong>${daysNeeded}日</strong>かかり、<strong>${daysNeeded - days}日</strong>足りません。`;
+
+  return `<div class="card-panel ${inTime || !perDay ? "" : "danger"}">
+    <h2>試験までの見通し</h2>
+    <div class="stat-grid">
+      <div class="stat"><div class="v">${days}</div><div class="k">試験まで（日）</div></div>
+      <div class="stat"><div class="v">${remainingNew}</div><div class="k">まだ出していない枚数</div></div>
+      <div class="stat"><div class="v">${need}</div><div class="k">間に合わせるなら／日</div></div>
+    </div>
+    <p class="hint">${verdict}</p>
+    <p class="hint">※「一度は目を通せる」だけの計算です。定着には復習が要るので、
+      実際にはもう少し早めに一周し終えるのが安全です。</p>
+  </div>`;
+}
+
 // ---------------------------------------------------------------- 統計
 
 async function showStats() {
@@ -1010,7 +1179,7 @@ async function showStats() {
   const young = app.cards.filter((c) => c.state === State.Review && (c.stability ?? 0) < 21).length;
   const fresh = app.cards.filter((c) => c.state === State.New).length;
 
-  $("#stats-body").innerHTML = `
+  $("#stats-body").innerHTML = examPlanHtml(fresh) + `
     <div class="stat-grid">
       <div class="stat"><div class="v">${st.reviews}</div><div class="k">今日の枚数</div></div>
       <div class="stat"><div class="v">${st.retention == null ? "—" : (st.retention * 100).toFixed(0) + "%"}</div><div class="k">今日の正答率</div></div>
@@ -1052,11 +1221,13 @@ function showSettings() {
   $("#set-ai-base").value = s.base;
   $("#set-backup-days").value = String(backupDays());
   $("#set-neworder").value = app.settings.newOrder ?? "position";
+  $("#set-examdate").value = app.settings.examDate ?? "";
   $("#set-shuffleday").checked = app.settings.shuffleSameDay !== false;
   $("#set-burysiblings").checked = app.settings.burySiblings !== false;
   $("#set-leech-th").value = String(app.settings.leechThreshold ?? 8);
   $("#set-leech-action").value = app.settings.leechAction ?? "suspend";
   renderDeckLimitEditor();
+  renderDeckDeleteList();
   refreshBackupBanner();
   requestPersistence();
 
@@ -1085,6 +1256,7 @@ async function saveSettings() {
   app.settings.autoScrollToAnswer = $("#set-autoscroll").checked;
   app.settings.hideCardAILinks = $("#set-hideailinks").checked;
   app.settings.fontSize = Number($("#set-fontsize").value);
+    app.settings.examDate = $("#set-examdate").value || null;
   app.settings.newOrder = $("#set-neworder").value;
   app.settings.shuffleSameDay = $("#set-shuffleday").checked;
   app.settings.burySiblings = $("#set-burysiblings").checked;
@@ -1115,6 +1287,84 @@ async function saveSettings() {
   app.settings.modeId = app.modeId;
   await store.setMeta("settings", app.settings);
   makeFsrs();
+}
+
+// ------------------------------------------------ デッキの削除
+
+/** そのデッキ（配下を含む）を消したら何が消えるかを先に数える */
+function deletionPlan(topName) {
+  const deckIds = app.decks
+    .filter((d) => d.name === topName || d.name.startsWith(topName + "::"))
+    .map((d) => d.id);
+  const deckSet = new Set(deckIds);
+  const cards = app.cards.filter((c) => deckSet.has(c.did));
+  const keptNids = new Set(app.cards.filter((c) => !deckSet.has(c.did)).map((c) => c.nid));
+  // 他のデッキからも使われているノートは残す
+  const noteIds = [...new Set(cards.map((c) => c.nid))].filter((n) => !keptNids.has(n));
+  return { deckIds, cards, noteIds };
+}
+
+/** どのノートからも参照されなくなった画像・音声を消す */
+async function pruneMedia() {
+  const used = new Set();
+  for (const n of app.notes.values()) {
+    for (const m of n.fields.join(" ").matchAll(/(?:src|data)="([^"]+)"|\[sound:([^\]]+)\]/g)) {
+      const name = decodeURIComponent(m[1] || m[2] || "");
+      if (name && !/^(https?:|data:|blob:)/i.test(name)) used.add(name);
+    }
+  }
+  const all = await store.mediaNames();
+  const orphans = all.filter((n) => !used.has(n));
+  await store.del("media", orphans);
+  return orphans.length;
+}
+
+async function deleteDeck(topName) {
+  const plan = deletionPlan(topName);
+  const msg =
+    `「${topName}」を削除します。\n\n`
+    + `・カード ${plan.cards.length} 枚\n`
+    + `・問題 ${plan.noteIds.length} 件\n`
+    + `・その学習履歴もすべて\n\n`
+    + `元に戻せません。書き出しておくと復元できます。よろしいですか？`;
+  if (!confirm(msg)) return;
+
+  busy(`${topName} を削除しています…`);
+  try {
+    await store.delRevlogForCards(plan.cards.map((c) => c.id));
+    await store.del("cards", plan.cards.map((c) => c.id));
+    await store.del("notes", plan.noteIds);
+    await store.del("decks", plan.deckIds);
+    for (const n of plan.noteIds) await store.setMeta(`ai:${n}`, null); // AIの記録も道連れにする
+    await loadCollection();
+    const freed = await pruneMedia();
+    app.selectedDeckIds = null;
+    await clearSession();
+    await showHome();
+    toast(`「${topName}」を削除しました（メディア ${freed} 件も整理）`);
+  } finally {
+    unbusy();
+  }
+}
+
+function renderDeckDeleteList() {
+  const el = $("#deck-delete-list");
+  if (!el) return;
+  const tops = [...new Set(app.decks.map((d) => d.name.split("::")[0]))];
+  if (!tops.length) {
+    el.innerHTML = `<p class="hint">読み込んでいるデッキはありません。</p>`;
+    return;
+  }
+  el.innerHTML = tops
+    .map((n) => {
+      const p = deletionPlan(n);
+      return `<div class="deck-del">
+        <span class="name">${escapeHtml(n)}</span>
+        <span class="muted">${p.cards.length}枚</span>
+        <button class="btn small danger" data-del="${escapeHtml(n)}">削除</button>
+      </div>`;
+    })
+    .join("");
 }
 
 /** 教科（一番上のデッキ）ごとに1日の新規上限を決められるようにする */
@@ -1228,6 +1478,11 @@ function wireUI() {
   $("#btn-install-2").onclick = doInstall;
   $("#btn-backup-now").onclick = exportAll;
   $("#btn-collapse-all").onclick = toggleAllDecks;
+  $("#btn-resume").onclick = resumeSession;
+  $("#deck-delete-list").onclick = (e) => {
+    const b = e.target.closest("[data-del]");
+    if (b) deleteDeck(b.dataset.del);
+  };
   $("#set-backup-days").onchange = async (e) => {
     localStorage.setItem("backup.days", e.target.value);
     await refreshBackupBanner();

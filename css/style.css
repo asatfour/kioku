@@ -518,3 +518,21 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 .sub { font-size: 0.95rem; margin: 1rem 0 0.2rem; color: var(--fg); }
 .field.deck-limit > span { flex: 1 1 10rem; font-size: 0.86rem; }
 .field.deck-limit input[type="number"] { flex: 0 0 6rem; }
+
+/* ------------------------------------------------ 学習中の進捗 */
+#study-progress { margin: 0.2rem 0 0.1rem; }
+#study-progress .bar { height: 100%; background: var(--accent); border-radius: 999px; transition: width .2s ease; }
+#study-progress-text { font-size: 0.78rem; text-align: right; margin-bottom: 0.3rem; }
+
+/* ------------------------------------------------ AIの過去のやりとり */
+.ai-past-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.8rem; color: var(--fg-dim);
+  padding: 4px 0 6px; border-bottom: 1px solid var(--line); margin-bottom: 6px;
+}
+.ai-past-head .btn { margin-left: auto; }
+.ai-msg.old { opacity: .72; }
+
+/* ------------------------------------------------ デッキの削除 */
+.deck-del { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.deck-del .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

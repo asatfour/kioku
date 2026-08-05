@@ -40,6 +40,11 @@
     <button id="btn-backup-now" class="btn small">書き出す</button>
     <button class="banner-x icon-btn" data-close="backup-banner" aria-label="閉じる">✕</button>
   </div>
+  <div id="resume-banner" class="banner hidden">
+    <span id="resume-msg"></span>
+    <button id="btn-resume" class="btn small">続きから</button>
+    <button class="banner-x icon-btn" data-close="resume-banner" aria-label="閉じる">✕</button>
+  </div>
 </div>
 
 <!-- ===================== ホーム ===================== -->
@@ -90,6 +95,9 @@
     <div id="study-counts"></div>
     <div id="study-deck" class="muted"></div>
   </div>
+  <!-- 終わりが見えないと集中が切れるので、残りを常に出す -->
+  <div id="study-progress" class="progress"><div class="bar"></div></div>
+  <div id="study-progress-text" class="muted"></div>
 
   <div id="card-area">
     <div id="card-content" class="card-render"></div>
@@ -190,6 +198,14 @@
   </section>
 
   <section class="card-panel">
+    <h2>試験日</h2>
+    <label class="field"><span>本番の日付</span>
+      <input type="date" id="set-examdate">
+    </label>
+    <p class="hint">統計画面に「この進度で全範囲に手が回るか」「1日何枚おろせばよいか」を出します。</p>
+  </section>
+
+  <section class="card-panel">
     <h2>出題の調整</h2>
     <label class="field"><span>新規カードの順番</span>
       <select id="set-neworder">
@@ -274,6 +290,13 @@
     <button id="btn-install-2" class="btn" disabled>ホーム画面に追加</button>
     <p class="hint" id="install-note">この端末の対応状況を確認しています…</p>
     <p class="hint"><a href="LICENSES.txt" target="_blank" rel="noopener">同梱ライブラリのライセンス表示</a></p>
+  </section>
+
+  <section class="card-panel">
+    <h2>デッキの削除</h2>
+    <p class="hint">選んだデッキだけを、配下の階層ごと消します。
+      使われなくなった画像・音声も一緒に整理します。他のデッキでも使っている問題は残ります。</p>
+    <div id="deck-delete-list"></div>
   </section>
 
   <section class="card-panel danger">

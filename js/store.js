@@ -58,6 +58,34 @@ const reqp = (r) =>
     r.onerror = () => rej(r.error);
   });
 
+/** 指定したキーの並びをまとめて消す（デッキ単位の削除で使う） */
+export async function del(storeName, keys) {
+  if (!keys.length) return;
+  await open();
+  const t = tx([storeName], "readwrite");
+  const s = t.objectStore(storeName);
+  for (const k of keys) s.delete(k);
+  await done(t);
+}
+
+/** カードに紐づく学習履歴を消す */
+export async function delRevlogForCards(cardIds) {
+  if (!cardIds.length) return;
+  await open();
+  const t = tx(["revlog"], "readwrite");
+  const idx = t.objectStore("revlog").index("cardId");
+  for (const cid of cardIds) {
+    const r = idx.openCursor(IDBKeyRange.only(cid));
+    r.onsuccess = () => {
+      const cur = r.result;
+      if (!cur) return;
+      cur.delete();
+      cur.continue();
+    };
+  }
+  await done(t);
+}
+
 export async function getMeta(key, dflt = null) {
   await open();
   const v = await reqp(tx(["meta"]).objectStore("meta").get(key));
