@@ -681,3 +681,16 @@ body.studying #banners { display: none; }
   padding-bottom: 0.7em;
 }
 .ai-msg.ai hr { border: 0; border-top: 1px solid var(--line); margin: 0.9rem 0; }
+
+/* ------------------------------------------------ 下部の学習ボタン
+   中央寄せに transform を使うと、押したときの transform:translateY() が
+   中央寄せごと打ち消して、ボタンが右へ飛ぶ。margin で中央に置く。 */
+.sticky-study {
+  left: 0;
+  right: 0;
+  transform: none;
+  margin-left: auto;
+  margin-right: auto;
+}
+.sticky-study:active { transform: translateY(1px); }
+#study-hint { margin-bottom: 5.2rem; }

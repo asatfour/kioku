@@ -201,9 +201,26 @@ async function showHome() {
     btnStudy.disabled = false;
     btnStudy.dataset.more = "1";
   } else {
-    btnStudy.textContent = "今日のぶんは終わりました";
-    btnStudy.disabled = true;
+    // このモードでは品切れでも、条件のゆるいモードなら残っていることがある。
+    // 灰色のボタンで行き止まりにせず、どこへ行けば続けられるかを出す。
+    const alt = bestAlternativeMode();
+    if (alt) {
+      btnStudy.textContent = `「${alt.mode.name}」に切り替えて続ける（${alt.count}枚）`;
+      btnStudy.disabled = false;
+      btnStudy.dataset.more = "switch:" + alt.mode.id;
+    } else {
+      btnStudy.textContent = "今日のぶんは終わりました";
+      btnStudy.disabled = true;
+    }
   }
+  // なぜ品切れなのかを言う（条件で落ちているだけ、と分かるように）
+  const note = $("#study-hint");
+  const m = app.modes.find((x) => x.id === app.modeId);
+  const filtered = q.counts.total === 0 && m?.filter && (m.filter.maxChars || m.filter.allowImage === false);
+  note.textContent = filtered
+    ? `いまは「${m.name}」（${m.filter.maxChars ? m.filter.maxChars + "字まで" : ""}${m.filter.allowImage === false ? "・図なし" : ""}）に絞っています。`
+    : "";
+  note.classList.toggle("hidden", !filtered);
 }
 
 const deckNameById = () => new Map(app.decks.map((d) => [d.id, d.name]));
@@ -395,6 +412,23 @@ function startStudy() {
  * モードの設定そのものを書き換えると「その日だけ多めにやった」が翌日以降も効いてしまうので、
  * この起動中だけの上乗せとして持つ。
  */
+/** いまのモードで品切れのとき、いちばん多く出せる別のモードを探す */
+function bestAlternativeMode() {
+  let best = null;
+  for (const m of app.modes) {
+    if (m.id === app.modeId) continue;
+    const q = buildQueue({
+      cards: app.cards, noteById: app.notes, notetypeById: app.notetypes,
+      deckIds: app.selectedDeckIds, mode: m, now: Date.now(),
+      rolloverHour: app.settings.rolloverHour,
+      deckNameById: deckNameById(), onlyFlagged: app.onlyFlagged,
+    });
+    const count = q.available.new + q.available.review;
+    if (count > 0 && (!best || count > best.count)) best = { mode: m, count };
+  }
+  return best;
+}
+
 function studyMore() {
   app.extra = { new: (app.extra?.new ?? 0) + 20, review: (app.extra?.review ?? 0) + 50 };
   startStudy();
@@ -1986,8 +2020,16 @@ function wireUI() {
   $("#btn-home").onclick = showHome;
   $("#btn-stats").onclick = showStats;
   $("#btn-settings").onclick = showSettings;
-  $("#btn-study-all").onclick = () => {
-    if ($("#btn-study-all").dataset.more === "1") return studyMore();
+  $("#btn-study-all").onclick = async () => {
+    const more = $("#btn-study-all").dataset.more || "";
+    if (more === "1") return studyMore();
+    if (more.startsWith("switch:")) {
+      app.modeId = more.slice(7);
+      app.settings.modeId = app.modeId;
+      await store.setMeta("settings", app.settings);
+      renderModeStrip();
+      return studyMore();
+    }
     startStudy();
   };
   $("#btn-back-home").onclick = showHome;
