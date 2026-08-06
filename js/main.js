@@ -912,7 +912,12 @@ async function exportHistory({ silent = false } = {}) {
     const blob = await gzip(JSON.stringify(payload));
     const name = `記憶_履歴_${new Date().toISOString().slice(0, 10)}.json.gz`;
 
-    if (silent) {
+    // アプリの中なら、アプリの領域へ置く（OSが勝手にドライブへ退避してくれる）
+    const savedInApp = await saveToApp(blob, name);
+
+    if (savedInApp) {
+      // 何もしない。控えはもう安全な場所にある
+    } else if (silent) {
       // 自動のときは共有画面を出さない（学習を始めようとしている人の邪魔をしない）
       downloadBlob(blob, name);
     } else {
@@ -929,10 +934,13 @@ async function exportHistory({ silent = false } = {}) {
     }
     await store.setMeta("lastExportAt", Date.now());
     await refreshBackupBanner();
+    const kb = (blob.size / 1024).toFixed(0);
     toast(
-      silent
-        ? `学習履歴の控えを保存しました（${(blob.size / 1024).toFixed(0)}KB・自動）`
-        : `学習履歴を書き出しました（${(blob.size / 1024).toFixed(0)}KB）`
+      savedInApp
+        ? `控えを保存しました（${kb}KB・アプリに保管、機種変更でも戻ります）`
+        : silent
+          ? `学習履歴の控えを保存しました（${kb}KB・自動）`
+          : `学習履歴を書き出しました（${kb}KB）`
     );
   } finally {
     if (!silent) unbusy();
@@ -976,6 +984,31 @@ async function importHistory(file) {
   } finally {
     unbusy();
   }
+}
+
+/** Android アプリの中で動いているか（入れ物側が窓口を差し込んでくる） */
+const nativeHost = () => (window.KiokuNative?.isNative?.() ? window.KiokuNative : null);
+
+const toBase64 = (blob) =>
+  new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(",")[1] ?? "");
+    r.onerror = () => rej(r.error);
+    r.readAsDataURL(blob);
+  });
+
+/**
+ * 控えをアプリの領域へ保存する。
+ * ここに置いたものは Android の「アプリの自動バックアップ」で
+ * 利用者のドライブへ退避され、機種変更のときに自動で戻る。
+ */
+async function saveToApp(blob, name) {
+  const host = nativeHost();
+  if (!host) return false;
+  const r = host.saveBackup(name, await toBase64(blob));
+  if (typeof r === "string" && r.startsWith("ok:")) return true;
+  console.warn("アプリへの保存に失敗:", r);
+  return false;
 }
 
 function downloadBlob(blob, name) {
@@ -1083,9 +1116,11 @@ async function refreshBackupBanner() {
 
   const note = $("#last-export-note");
   if (note) {
-    note.textContent = last
-      ? `最後の書き出し: ${new Date(last).toLocaleString("ja-JP")}`
-      : "まだ書き出していません。";
+    const host = nativeHost();
+    const kept = host ? (host.backupCount?.() ?? 0) : 0;
+    note.textContent =
+      (last ? `最後の控え: ${new Date(last).toLocaleString("ja-JP")}` : "まだ控えていません。")
+      + (host ? `　アプリ内に ${kept} 世代を保管中（機種変更で自動的に戻ります）` : "");
   }
 
   if (!app.cards.length || days === 0 || el.dataset.dismissed === "1") {
