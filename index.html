@@ -197,8 +197,8 @@
 <main id="view-settings" class="view hidden">
   <h1>設定</h1>
 
-  <section class="card-panel">
-    <h2>学習の強さ</h2>
+  <details class="card-panel">
+    <summary>学習の強さ</summary>
     <label class="field">
       <span>目標保持率（覚えていたい割合）</span>
       <input type="range" id="set-dr" min="0.75" max="0.97" step="0.01">
@@ -209,17 +209,17 @@
       <span>1日の区切り（この時刻までは前日扱い）</span>
       <input type="number" id="set-rollover" min="0" max="23">時
     </label>
-  </section>
+  </details>
 
-  <section class="card-panel">
-    <h2>答え合わせのしかた</h2>
+  <details class="card-panel">
+    <summary>答え合わせのしかた</summary>
     <label class="field"><span>ボタンの数</span>
       <select id="set-grading">
         <option value="2">2つ（できた／できなかった）— 迷わない</option>
         <option value="4">4つ（本家と同じ細かさ）</option>
       </select>
     </label>
-    <p class="hint">2つにすると「むずい」と「ふつう」で迷う時間がなくなります。記憶モデルは同じものが動きます。</p>
+    <p class="hint">2つにすると迷う時間が減ります。記憶の計算は同じです。</p>
     <label class="field"><span>押し間違い防止（解答表示から待つ時間）</span>
       <input type="number" id="set-guard" min="0" max="2000" step="100">ミリ秒
     </label>
@@ -229,23 +229,23 @@
     <label class="field"><span>カード内の「外部AIに聞く」ボタンを隠す</span>
       <input type="checkbox" id="set-hideailinks">
     </label>
-    <p class="hint">このアプリはカードを離れずに聞けるので、同じボタンが二重に並ぶのを防ぎます。カードのデータは変更しません。</p>
+    <p class="hint">同じボタンが二重に並ぶのを防ぎます。カードは変更しません。</p>
     <label class="field"><span>文字の大きさ</span>
       <input type="range" id="set-fontsize" min="14" max="24" step="1">
       <output id="set-fontsize-out"></output>
     </label>
-  </section>
+  </details>
 
-  <section class="card-panel">
-    <h2>試験日</h2>
+  <details class="card-panel">
+    <summary>試験日</summary>
     <label class="field"><span>本番の日付</span>
       <input type="date" id="set-examdate">
     </label>
-    <p class="hint">統計画面に「この進度で全範囲に手が回るか」「1日何枚おろせばよいか」を出します。</p>
-  </section>
+    <p class="hint">統計に「間に合うか」「1日何枚か」を出します。</p>
+  </details>
 
-  <section class="card-panel">
-    <h2>出題の調整</h2>
+  <details class="card-panel">
+    <summary>出題の調整</summary>
     <label class="field"><span>新規カードの順番</span>
       <select id="set-neworder">
         <option value="position">登録順（デッキの並びどおり）</option>
@@ -253,7 +253,7 @@
       </select>
     </label>
     <label class="field"><span>同じ期限のカードを日替わりで入れ替える</span><input type="checkbox" id="set-shuffleday"></label>
-    <p class="hint">順番そのものを手がかりに思い出してしまうのを防ぎます。期限の前後は崩しません。</p>
+    <p class="hint">順番で覚えてしまうのを防ぎます。期限の前後は崩しません。</p>
 
     <label class="field"><span>同じ問題から作られた別カードを、その日はもう出さない</span><input type="checkbox" id="set-burysiblings"></label>
 
@@ -272,19 +272,19 @@
         <option value="tag">印を付けるだけ（出し続ける）</option>
       </select>
     </label>
-    <p class="hint">何度も間違えるカードは覚え方が合っていないことが多く、放っておくと毎日出続けます。</p>
+    <p class="hint">放っておくと毎日出続けるカードを止めます。</p>
 
     <div id="deck-limit-editor"></div>
-  </section>
+  </details>
 
-  <section class="card-panel">
-    <h2>場面別モード</h2>
+  <details class="card-panel">
+    <summary>場面別モード</summary>
     <p class="hint">その場でできることだけを出します。枚数と条件を変えられます。</p>
     <div id="mode-editor"></div>
-  </section>
+  </details>
 
-  <section class="card-panel">
-    <h2>AI</h2>
+  <details class="card-panel">
+    <summary>AI</summary>
     <label class="field"><span>使うAI</span>
       <select id="set-ai-provider">
         <option value="gemini">Gemini（無料枠あり）</option>
@@ -301,11 +301,11 @@
       で無料で作れます（支払い情報の登録なしのままなら無料枠のみで動き、課金は発生しません）。
       もっと多く使いたい日は モデルに <code>gemini-2.5-flash-lite</code> と入れると1日の上限が緩くなります。
     </p>
-    <p class="hint">キーはこの端末の localStorage にだけ入ります。通信は選んだ提供元へ直接行きます。</p>
-  </section>
+    <p class="hint">キーはこの端末にだけ入ります。</p>
+  </details>
 
-  <section class="card-panel">
-    <h2>バックアップ</h2>
+  <details class="card-panel">
+    <summary>バックアップ</summary>
     <p class="hint">
       学習履歴はこの端末の中にだけあります。<strong>ブラウザの「閲覧データを削除」で消えます。</strong>
       ときどき .apkg に書き出しておけば、機種変更のときも Anki 本体にも戻せます。
@@ -342,17 +342,17 @@
       書き出しは、共有できる端末では<strong>そのままドライブやメールへ送れます</strong>。
       端末の中だけに置くと、端末を失ったときに一緒に消えます。
     </p>
-  </section>
+  </details>
 
-  <section class="card-panel">
-    <h2>アプリ</h2>
+  <details class="card-panel">
+    <summary>アプリ</summary>
     <button id="btn-install-2" class="btn" disabled>ホーム画面に追加</button>
     <p class="hint" id="install-note">この端末の対応状況を確認しています…</p>
     <p class="hint"><a href="privacy.html" target="_blank" rel="noopener">プライバシーについて</a>　/　<a href="LICENSES.txt" target="_blank" rel="noopener">同梱ライブラリのライセンス表示</a></p>
-  </section>
+  </details>
 
-  <section class="card-panel">
-    <h2>端末を変えるとき</h2>
+  <details class="card-panel">
+    <summary>端末を変えるとき</summary>
     <p class="hint">
       学習履歴はこの端末の中にあります。<strong>新しい端末へは自動では移りません。</strong>
       下の手順で移してください（3手で済みます）。
@@ -370,28 +370,28 @@
       ※ Androidのアプリ版をお使いの場合は、機種変更のとき
       <strong>OSが自動で復元する</strong>ため、この手順は不要になることがあります。
     </p>
-  </section>
+  </details>
 
-  <section class="card-panel">
-    <h2>保留中のカード</h2>
+  <details class="card-panel">
+    <summary>保留中のカード</summary>
     <p class="hint">「⏸ 保留」で止めたカードと、まちがえすぎて自動で止まったカードです。
       ここで解除すると、また出題されるようになります。</p>
     <div id="suspended-list"></div>
     <button id="btn-unsuspend-all" class="btn hidden">すべて解除する</button>
-  </section>
+  </details>
 
-  <section class="card-panel">
-    <h2>デッキの削除</h2>
+  <details class="card-panel">
+    <summary>デッキの削除</summary>
     <p class="hint">選んだデッキだけを、配下の階層ごと消します。
       使われなくなった画像・音声も一緒に整理します。他のデッキでも使っている問題は残ります。</p>
     <div id="deck-delete-list"></div>
-  </section>
+  </details>
 
-  <section class="card-panel danger">
-    <h2>データ</h2>
+  <details class="card-panel danger">
+    <summary>データ</summary>
     <button id="btn-wipe" class="btn danger">全部消す</button>
-    <p class="hint">読み込んだデッキと学習履歴を削除します。書き出してから実行してください。</p>
-  </section>
+    <p class="hint">すべて消えます。先に控えを取ってください。</p>
+  </details>
 </main>
 
 <!-- 引っ張って更新。インストールするとブラウザの標準機能が効かなくなるので自前で持つ。 -->

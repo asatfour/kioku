@@ -699,3 +699,32 @@ body.studying #banners { display: none; }
 /* ------------------------------------------------ 手順の並び */
 .steps { margin: 0.6rem 0; padding-left: 1.4rem; font-size: 0.88rem; line-height: 1.9; }
 .steps li { margin: 0.35rem 0; }
+
+/* ------------------------------------------------ 設定画面を「開いて読む」形にする
+   説明が縦に全部並ぶと、目的の項目に辿り着く前に読む量で疲れる。
+   既定は見出しだけの一覧にして、必要なものだけ開く。 */
+details.card-panel { padding: 0; }
+details.card-panel > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.95rem 1rem;
+  font-size: 1rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: var(--tap);
+}
+details.card-panel > summary::-webkit-details-marker { display: none; }
+details.card-panel > summary::before {
+  content: "▸";
+  color: var(--fg-dim);
+  font-size: 0.8rem;
+  transition: transform .15s ease;
+}
+details.card-panel[open] > summary::before { transform: rotate(90deg); }
+details.card-panel[open] > summary { border-bottom: 1px solid var(--line); }
+details.card-panel > *:not(summary) { margin-left: 1rem; margin-right: 1rem; }
+details.card-panel > *:last-child { margin-bottom: 1rem; }
+details.card-panel > summary + * { margin-top: 0.8rem; }
+details.card-panel.danger > summary { color: var(--bad); }
