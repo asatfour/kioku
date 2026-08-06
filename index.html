@@ -320,7 +320,17 @@
       </select>
     </label>
     <p class="hint" id="last-export-note">まだ書き出していません。</p>
-    <button id="btn-export-2" class="btn">いま書き出す</button>
+    <button id="btn-export-hist" class="btn primary">学習履歴だけを控える（軽い・ふだんはこちら）</button>
+    <p class="hint">
+      デッキ本体は含めず、<strong>どこまで覚えたかだけ</strong>を出します。数十KBなのでメモやメールにも置けます。
+      戻すときは、同じデッキを読み込んでから下の「控えを戻す」で重ねてください。
+    </p>
+    <label class="btn">
+      <input type="file" id="file-import-hist" accept=".gz,.json" hidden>
+      控えを戻す
+    </label>
+    <hr class="sep">
+    <button id="btn-export-2" class="btn">デッキごと書き出す（.apkg・Ankiでも読める）</button>
     <p class="hint" id="storage-note"></p>
     <p class="hint warn hidden" id="storage-warn"></p>
     <p class="hint">

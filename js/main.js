@@ -847,6 +847,105 @@ async function importFile(file) {
   }
 }
 
+// ------------------------------------------------ 学習履歴だけの控え
+//
+// デッキ本体（数MB）はめったに変わらないのに、毎回まるごと運ぶのは重い。
+// 失って困るのは「どこまで覚えたか」なので、そこだけを小さく取り出せるようにする。
+// 圧縮すると数十KBに収まり、メモ帳やメールにも置ける。
+
+const HISTORY_FIELDS = [
+  "id", "nid", "did", "ord", "state", "step", "due", "stability", "difficulty",
+  "lastReview", "reps", "lapses", "suspended", "flags", "isLeech", "newPos",
+];
+
+async function gzip(text) {
+  if (typeof CompressionStream !== "function") return new Blob([text]);
+  const cs = new CompressionStream("gzip");
+  const stream = new Blob([text]).stream().pipeThrough(cs);
+  return new Response(stream).blob();
+}
+
+async function gunzip(blob) {
+  const head = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+  if (head[0] !== 0x1f || head[1] !== 0x8b) return blob.text(); // 圧縮していない控え
+  const ds = new DecompressionStream("gzip");
+  return new Response(blob.stream().pipeThrough(ds)).text();
+}
+
+async function exportHistory() {
+  busy("学習履歴をまとめています…");
+  try {
+    const revlog = await store.revlogSince(0);
+    const payload = {
+      kind: "kioku-history",
+      version: 1,
+      exportedAt: Date.now(),
+      cards: app.cards.map((c) => {
+        const o = {};
+        for (const k of HISTORY_FIELDS) if (c[k] !== undefined) o[k] = c[k];
+        return o;
+      }),
+      revlog,
+    };
+    const blob = await gzip(JSON.stringify(payload));
+    const name = `記憶_履歴_${new Date().toISOString().slice(0, 10)}.json.gz`;
+    const file = new File([blob], name, { type: "application/gzip" });
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: name });
+      } catch (e) {
+        if (e?.name !== "AbortError") downloadBlob(blob, name);
+      }
+    } else {
+      downloadBlob(blob, name);
+    }
+    await store.setMeta("lastExportAt", Date.now());
+    await refreshBackupBanner();
+    toast(`学習履歴を書き出しました（${(blob.size / 1024).toFixed(0)}KB）`);
+  } finally {
+    unbusy();
+  }
+}
+
+/** 控えを今のデッキに重ねる。カードは .apkg 由来のIDで突き合わせる。 */
+async function importHistory(file) {
+  busy("学習履歴を戻しています…");
+  try {
+    const data = JSON.parse(await gunzip(file));
+    if (data?.kind !== "kioku-history") {
+      return toast("これは学習履歴の控えではありません（.apkg なら「読み込む」から）");
+    }
+    const byId = new Map(app.cards.map((c) => [c.id, c]));
+    let applied = 0;
+    const updated = [];
+    for (const rec of data.cards ?? []) {
+      const cur = byId.get(rec.id);
+      if (!cur) continue; // そのデッキを入れていなければ飛ばす
+      updated.push({ ...cur, ...rec });
+      applied++;
+    }
+    if (!applied) {
+      return toast("重ねる相手が見つかりません。先に同じデッキを読み込んでください");
+    }
+    await store.putAll("cards", updated);
+    if (data.revlog?.length) {
+      const have = new Set((await store.revlogSince(0)).map((r) => `${r.cardId}:${r.reviewedAt}`));
+      const add = data.revlog
+        .filter((r) => !have.has(`${r.cardId}:${r.reviewedAt}`))
+        .map(({ id, ...rest }) => rest); // idは振り直す（重複を避ける）
+      for (const r of add) await store.addRevlog(r);
+    }
+    await loadCollection();
+    await showHome();
+    const skipped = (data.cards?.length ?? 0) - applied;
+    toast(`${applied}枚に学習履歴を戻しました` + (skipped ? `（${skipped}枚は対象のデッキが未読込）` : ""));
+  } catch (e) {
+    toast("戻せませんでした: " + e.message);
+  } finally {
+    unbusy();
+  }
+}
+
 function downloadBlob(blob, name) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -2124,6 +2223,8 @@ function wireUI() {
   $("#file-import-empty").onchange = (e) => e.target.files[0] && importFile(e.target.files[0]);
   $("#btn-export").onclick = exportAll;
   $("#btn-export-2").onclick = exportAll;
+  $("#btn-export-hist").onclick = exportHistory;
+  $("#file-import-hist").onchange = (e) => e.target.files[0] && importHistory(e.target.files[0]);
 
   const askUrl = () =>
     importFromUrl(prompt("デッキ（.apkg）の直リンクURLを貼り付けてください", "https://"));

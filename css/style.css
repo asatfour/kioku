@@ -694,3 +694,4 @@ body.studying #banners { display: none; }
 }
 .sticky-study:active { transform: translateY(1px); }
 #study-hint { margin-bottom: 5.2rem; }
+.sep { border: 0; border-top: 1px solid var(--line); margin: 1.1rem 0 0.8rem; }
