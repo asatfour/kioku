@@ -1164,7 +1164,12 @@ async function openAI() {
       log.innerHTML = "";
       toast("このカードの記録を消しました");
     };
-    log.scrollTop = log.scrollHeight;
+    // 数式を組んでから位置を決める（組む前だと高さが変わって狂う）
+
+    await typeset(log);
+    // 最後に聞いた質問を上端に置く（末尾ではなく読み始めに合わせる）
+    const lastQ = [...log.querySelectorAll(".ai-msg.me")].pop();
+    if (lastQ) anchorToTop(lastQ);
   }
   $("#ai-quick").innerHTML = quickPrompts()
     .map((p, i) => `<button data-i="${i}">${p.label}</button>`)
@@ -1183,14 +1188,28 @@ async function openAI() {
   };
 }
 
+/**
+ * その要素が読み取り欄の一番上に来るように送る。
+ * 届くたびに末尾へ送ると、読み終わったとき末尾に貼りついて
+ * 毎回わざわざ先頭まで戻ることになる。読み始めの位置を固定する。
+ */
+function anchorToTop(el) {
+  const log = $("#ai-log");
+  // 位置の基準（offsetParent）が何であっても正しく出せるよう、実際の座標差で求める
+  const delta = el.getBoundingClientRect().top - log.getBoundingClientRect().top;
+  log.scrollTop = Math.max(0, log.scrollTop + delta);
+}
+
 async function sendAI(prompt, ctx) {
   const log = $("#ai-log");
   log.insertAdjacentHTML("beforeend", `<div class="ai-msg me">${escapeHtml(prompt)}</div>`);
+  const question = log.lastElementChild;
   const holder = document.createElement("div");
   holder.className = "ai-msg ai";
   holder.textContent = "…";
   log.appendChild(holder);
-  log.scrollTop = log.scrollHeight;
+  // 質問を上端に置く。以後は下へ伸びていくので、そのまま上から読める
+  anchorToTop(question);
   $("#ai-status").textContent = "考えています…";
   const card = app.current;
   try {
@@ -1200,8 +1219,8 @@ async function sendAI(prompt, ctx) {
       context: ctx,
       settings: aiSettings(),
       onChunk: (_delta, full) => {
+        // 伸びるたびに追いかけない。上端に置いた質問はそのまま
         holder.innerHTML = renderMarkdown(full);
-        log.scrollTop = log.scrollHeight;
       },
     });
     holder.innerHTML = renderMarkdown(answer);
@@ -1211,7 +1230,7 @@ async function sendAI(prompt, ctx) {
     holder.textContent = "失敗しました: " + e.message;
   } finally {
     $("#ai-status").textContent = "";
-    log.scrollTop = log.scrollHeight;
+    anchorToTop(question); // 組み直しで位置がずれることがあるので置き直す
   }
 }
 

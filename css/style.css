@@ -654,3 +654,8 @@ body.studying #banners { display: none; }
   background: linear-gradient(to right, transparent, var(--bg-elev));
   pointer-events: none;
 }
+
+/* 回答の読み始めを上端に固定するため、位置計算の基準にする */
+#ai-log { position: relative; scroll-behavior: auto; }
+/* 最後の回答の下に余白を作り、短い回答でも先頭を上端に持ってこられるようにする */
+#ai-log::after { content: ""; display: block; height: 60vh; }
