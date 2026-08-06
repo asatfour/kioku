@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>記憶 — プライバシーについて</title>
+<style>
+  :root { color-scheme: dark light; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI",
+      "Noto Sans JP", system-ui, sans-serif;
+    line-height: 1.85; margin: 0 auto; padding: 24px 18px 80px; max-width: 760px;
+    background: #14161a; color: #e8eaed;
+  }
+  @media (prefers-color-scheme: light) { body { background: #f6f7f9; color: #1b1d21; } }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.08rem; margin-top: 2rem; border-bottom: 1px solid #2e333c; padding-bottom: .3rem; }
+  .lead { color: #9aa2ae; }
+  table { border-collapse: collapse; width: 100%; margin: .8rem 0; font-size: .92rem; }
+  th, td { border: 1px solid #2e333c; padding: .5rem .6rem; text-align: left; vertical-align: top; }
+  code { background: rgba(127,127,127,.18); padding: 0 .3em; border-radius: 4px; }
+  .box { border-left: 3px solid #6aa9ff; padding: .2rem 0 .2rem .8rem; margin: 1rem 0; }
+  a { color: #6aa9ff; }
+</style>
+</head>
+<body>
+
+<h1>プライバシーについて</h1>
+<p class="lead">「記憶」がどのデータをどこに置くか、どこへ送るかを、実装に即して書いています。<br>
+最終更新: 2026年8月6日</p>
+
+<div class="box">
+  <strong>要点</strong><br>
+  このアプリに<strong>サーバはありません</strong>。アカウント登録も不要です。<br>
+  読み込んだデッキと学習履歴は<strong>あなたの端末の中だけ</strong>に保存され、こちらからは見えません。<br>
+  ただし <strong>AI機能を使ったときだけ</strong>、そのカードの内容が選んだAI提供元へ送られます。
+</div>
+
+<h2>1. 保存されるもの・保存場所</h2>
+<table>
+  <tr><th>データ</th><th>保存場所</th><th>外部へ送るか</th></tr>
+  <tr><td>読み込んだデッキ（問題・答え・画像）</td><td>端末内（IndexedDB）</td><td>送りません</td></tr>
+  <tr><td>学習履歴・記憶の状態</td><td>端末内（IndexedDB）</td><td>送りません</td></tr>
+  <tr><td>設定・AIのAPIキー</td><td>端末内（localStorage）</td><td>APIキーは選んだ提供元への認証にのみ使用</td></tr>
+  <tr><td>AIとのやりとりの記録</td><td>端末内（IndexedDB）</td><td>送りません</td></tr>
+</table>
+<p>アプリを削除する、ブラウザの「閲覧データを削除」を実行する、設定の「全部消す」を押す —
+いずれの場合もこれらは消えます。<strong>復元手段はありません。</strong>
+設定の「バックアップ」から .apkg として書き出しておいてください。</p>
+
+<h2>2. AI機能を使ったとき</h2>
+<p>「AIに聞く」を押すと、<strong>そのカードの問題文・正答・デッキ名・タグ</strong>と、あなたが入力した質問が、
+設定で選んだ提供元へ<strong>ブラウザから直接</strong>送られます。当方のサーバは経由しません。</p>
+<table>
+  <tr><th>設定</th><th>送信先</th></tr>
+  <tr><td>Gemini（既定）</td><td>Google（<code>generativelanguage.googleapis.com</code>）</td></tr>
+  <tr><td>Claude</td><td>Anthropic（<code>api.anthropic.com</code>）</td></tr>
+  <tr><td>OpenAI互換</td><td>設定した宛先</td></tr>
+  <tr><td>アプリ内では使わない</td><td>Claude のサイトを新しいタブで開きます（内容がURLに載ります）</td></tr>
+</table>
+<p>送られた内容が提供元でどう扱われるかは、各社の規約によります。
+<strong>AI機能を使わなければ、カードの内容は端末から出ません。</strong></p>
+
+<h2>3. アクセス記録</h2>
+<p>このアプリは GitHub Pages で配信しています。ページやファイルを読み込む際、
+GitHub 社のサーバに一般的なアクセス記録（IPアドレス・日時・取得したファイル名など）が残ります。
+これは配信元の仕組みによるもので、当方が取得・保存しているものではありません。</p>
+
+<h2>4. 集めていないもの</h2>
+<ul>
+  <li>アクセス解析（Google Analytics 等）を<strong>入れていません</strong></li>
+  <li>エラー収集サービスを<strong>入れていません</strong></li>
+  <li>広告・追跡用の Cookie を<strong>使っていません</strong></li>
+  <li>アカウント・メールアドレス・氏名を<strong>取得しません</strong></li>
+</ul>
+<p>したがって、誰がどのデッキで何を学習しているかを、こちらが知る手段はありません。</p>
+
+<h2>5. 他人が作ったデッキを読み込むとき</h2>
+<p>.apkg には HTML が含まれます。悪意のあるデッキがカードに仕込んだコードで
+端末内のデータ（APIキーなど）を持ち出せないよう、<strong>読み込んだカードは表示前に無害化しています</strong>
+（実行される要素・外部への通信を取り除きます）。
+それでも、<strong>出所の分からないデッキの読み込みは避けてください。</strong></p>
+
+<h2>6. 同梱しているソフトウェア</h2>
+<p>第三者のライブラリを同梱しています。著作権表示とライセンスは
+<a href="LICENSES.txt">こちら</a>をご覧ください。</p>
+
+<h2>7. 免責</h2>
+<p>個人が学習用に作ったものです。データの消失・学習結果について責任を負いかねます。
+<strong>大切な学習履歴は必ず書き出して保管してください。</strong></p>
+
+<p style="margin-top:2.5rem"><a href="./">← アプリに戻る</a></p>
+</body>
+</html>

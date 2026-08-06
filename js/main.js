@@ -4,7 +4,7 @@
 import * as store from "./store.js";
 import { readApkg, writeApkg, toStudyCard } from "./apkg.js";
 import { Fsrs, State, Rating, humanInterval, DEFAULT_PARAMETERS } from "./fsrs.js";
-import { renderCard, resolveMedia, stripHtml } from "./render.js";
+import { renderCard, resolveMedia, stripHtml, sanitizeCardHtml, sanitizeCardCss } from "./render.js";
 import { buildQueue, DEFAULT_MODES, todayStats, forecast, dayStart, dayEnd } from "./queue.js";
 import { askAI, quickPrompts, buildContext } from "./ai.js";
 
@@ -568,7 +568,10 @@ async function drawCard(reveal) {
   const area = $("#card-content");
   area.classList.add("typesetting");
   area.style.fontSize = `${app.settings.fontSize}px`;
-  area.innerHTML = `<style>${nt.css || ""}</style><div class="card">${html}</div>`;
+  // カードは他人が作った可能性のあるHTML。実行できる要素と外部通信を落としてから入れる
+  area.innerHTML =
+    `<style>${sanitizeCardCss(nt.css || "")}</style>`
+    + `<div class="card">${sanitizeCardHtml(html)}</div>`;
   if (app.settings.hideCardAILinks) stripExternalAILinks(area);
   await typeset(area);
   area.classList.remove("typesetting");
@@ -844,6 +847,14 @@ async function importFile(file) {
   }
 }
 
+function downloadBlob(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
 async function exportAll() {
   busy("書き出しています…");
   try {
@@ -871,12 +882,21 @@ async function exportAll() {
       },
       deps
     );
+    const name = `記憶_${new Date().toISOString().slice(0, 10)}.apkg`;
     const blob = new Blob([bytes], { type: "application/octet-stream" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `記憶_${new Date().toISOString().slice(0, 10)}.apkg`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+
+    // 端末の中に置くだけでは、端末を失えば一緒に消える。
+    // 共有できる端末では、そのままドライブやメールへ送れるようにする。
+    const file = new File([blob], name, { type: "application/octet-stream" });
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: name });
+      } catch (e) {
+        if (e?.name !== "AbortError") downloadBlob(blob, name); // 共有できなければ従来どおり保存
+      }
+    } else {
+      downloadBlob(blob, name);
+    }
     await store.setMeta("lastExportAt", Date.now());
     await refreshBackupBanner();
     toast("書き出しました（Ankiで読み込めます）");
@@ -957,6 +977,11 @@ async function refreshBackupBanner() {
  * ブラウザに「このデータは勝手に消さないで」と申告する。
  * 容量不足のときに真っ先に捨てられるのを防ぐ（学習履歴の全損対策）。
  */
+/** iOS の Safari は、しばらく使わないサイトの保存領域を自動で消すことがある */
+const isIOS = () =>
+  /iP(hone|ad|od)/.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
 async function requestPersistence() {
   const note = $("#storage-note");
   try {
@@ -970,10 +995,26 @@ async function requestPersistence() {
       const { usage: u } = await navigator.storage.estimate();
       if (u) usage = `　使用中: ${(u / 1048576).toFixed(1)}MB`;
     }
+    app.persisted = persisted;
     if (note) {
       note.textContent = persisted
         ? "保存領域は保護されています（容量不足でも自動削除されません）。" + usage
-        : "保存領域は保護されていません。容量不足のとき自動削除される場合があります。" + usage;
+        : "保存領域は保護されていません。ホーム画面に追加すると保護されやすくなります。" + usage;
+    }
+    // 保護されていない端末では、書き出しの催促を早める
+    if (!persisted && localStorage.getItem("backup.days") == null) {
+      localStorage.setItem("backup.days", isIOS() ? "3" : "5");
+    }
+    const warn = $("#storage-warn");
+    if (warn) {
+      const risky = !persisted;
+      warn.classList.toggle("hidden", !risky);
+      warn.textContent = risky
+        ? isIOS()
+          ? "⚠️ iPhone/iPad では、しばらく開かないと学習履歴が自動で消えることがあります。"
+            + "ホーム画面に追加し、ときどき書き出してください。"
+          : "⚠️ 保存領域が保護されていません。ホーム画面に追加すると消えにくくなります。"
+        : "";
     }
   } catch {
     /* 対応していない端末では何もしない */

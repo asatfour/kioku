@@ -210,6 +210,80 @@ export function cardOrdsForNote(note, notetype) {
 }
 
 /** メディア参照（img src / audio src）をアプリ内のURLに差し替える */
+// ------------------------------------------------ カードの無害化
+//
+// カードの中身は .apkg から来る「他人が作った可能性のあるHTML」。
+// innerHTML でそのまま入れると <img onerror> ひとつで任意のコードが動き、
+// 同じオリジンにある APIキー（localStorage）を持ち出せてしまう。
+// 見た目を壊さない範囲で、実行できる要素と外部への通信だけを落とす。
+
+/** 中身ごと取り除く要素 */
+const DROP_TAGS = new Set([
+  "SCRIPT", "IFRAME", "OBJECT", "EMBED", "APPLET", "LINK", "META", "BASE",
+  "FORM", "INPUT", "BUTTON", "TEXTAREA", "SELECT", "OPTION", "PORTAL",
+]);
+
+/** 属性に置いてよいURLか（javascript: などを弾き、外部への通信も許さない） */
+function safeUrl(v) {
+  const s = String(v).trim().replace(/[ -]/g, "").toLowerCase();
+  if (s.startsWith("blob:") || s.startsWith("#")) return true;
+  if (s.startsWith("data:image/")) return true;
+  // 取り込んだメディアは相対パス。スキーム付きは通さない
+  return !/^[a-z][a-z0-9+.-]*:/.test(s);
+}
+
+/** CSS から外部通信と式を落とす */
+export function sanitizeCardCss(css) {
+  return String(css || "")
+    .replace(/@import[^;]*;?/gi, "")
+    .replace(/expression\s*\(/gi, "(")
+    // 外部を指す url(...) は中身ごと消す（断片として残すと痕跡が読めてしまう）
+    .replace(/url\(\s*['"]?\s*(?!blob:|data:image\/)[a-z][a-z0-9+.-]*:[^)]*\)/gi, "url()")
+    .replace(/<\/?style/gi, "");
+}
+
+/**
+ * カードのHTMLを無害化する。
+ * メディアを blob: に差し替えた後に通すこと（blob: は許可している）。
+ */
+export function sanitizeCardHtml(html) {
+  const doc = new DOMParser().parseFromString(
+    `<body><div id="kioku-root">${html}</div></body>`,
+    "text/html"
+  );
+  const root = doc.getElementById("kioku-root");
+  if (!root) return "";
+
+  const walk = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  const doomed = [];
+  const nodes = [];
+  while (walk.nextNode()) nodes.push(walk.currentNode);
+
+  for (const el of nodes) {
+    if (DROP_TAGS.has(el.tagName)) { doomed.push(el); continue; }
+    if (el.tagName === "STYLE") { el.textContent = sanitizeCardCss(el.textContent); continue; }
+    for (const attr of [...el.attributes]) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value;
+      // onclick / onerror などの実行属性は全部落とす
+      if (name.startsWith("on")) { el.removeAttribute(attr.name); continue; }
+      if (name === "srcdoc" || name === "formaction" || name === "ping") {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+      if (name === "style") {
+        el.setAttribute("style", sanitizeCardCss(value));
+        continue;
+      }
+      if (/^(src|href|xlink:href|data|action|poster|background)$/.test(name) && !safeUrl(value)) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+  for (const el of doomed) el.remove();
+  return root.innerHTML;
+}
+
 export function resolveMedia(html, urlFor) {
   return String(html).replace(
     /(<(?:img|source|audio|video)\b[^>]*\ssrc=)(["'])(.*?)\2/gi,
