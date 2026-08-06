@@ -94,6 +94,26 @@ init().catch((e) => {
   toast("起動に失敗しました: " + e.message);
 });
 
+/**
+ * 配布ページからの「この端末で使う」（?deck=...）で、取り込んでよいURLだけを返す。
+ *
+ * ⚠️ **同じ場所に置いてあるデッキしか受けない。**
+ * よそのURLを受けると、リンクを踏ませるだけで好きな中身を読み込ませられる。
+ * カードのHTMLは無害化してあるが、そもそも読み込ませない方が確実。
+ *
+ * @returns {null} 指定なし ／ {false} 受け付けない ／ {string} 取り込んでよいURL
+ */
+export function safeDeckUrl(search, here) {
+  const wanted = new URLSearchParams(search || "").get("deck");
+  if (!wanted) return null;
+  try {
+    const u = new URL(wanted, here);
+    return u.origin === new URL(here).origin ? u.href : false;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function init() {
   await store.open();
   app.settings = { ...DEFAULT_SETTINGS, ...(await store.getMeta("settings", {})) };
@@ -2307,6 +2327,14 @@ function wireUI() {
     importFromUrl(prompt("デッキ（.apkg）の直リンクURLを貼り付けてください", "https://"));
   if ($("#btn-import-url")) $("#btn-import-url").onclick = askUrl;
   $("#btn-import-url-empty").onclick = askUrl;
+
+  // 配布ページから一発で取り込めるようにする（?deck=... ）
+  const asked = safeDeckUrl(location.search, location.href);
+  if (asked !== null) {
+    history.replaceState(null, "", location.pathname);
+    if (asked) importFromUrl(asked);
+    else toast("このリンクからは取り込めません");
+  }
 
   // 通知帯
   $("#banners").addEventListener("click", (e) => {
