@@ -659,3 +659,25 @@ body.studying #banners { display: none; }
 #ai-log { position: relative; scroll-behavior: auto; }
 /* 最後の回答の下に余白を作り、短い回答でも先頭を上端に持ってこられるようにする */
 #ai-log::after { content: ""; display: block; height: 60vh; }
+
+/* ------------------------------------------------ 数式が切れないようにする
+   overflow-x:auto で横スクロールできる箱にすると、その箱の高さは行の高さで決まる。
+   分数や指数のように行より背の高い数式は、上下がはみ出して切られてしまう。
+   箱の中に上下の余白を持たせ、行間の指定を数式に持ち込まないことで防ぐ。 */
+.card-render mjx-container,
+.ai-msg.ai mjx-container {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  line-height: normal;
+  padding-top: 0.45em;
+  padding-bottom: 0.45em;
+}
+.card-render mjx-container[display="true"],
+.ai-msg.ai mjx-container[display="true"] {
+  display: block;
+  margin: 0.5em 0;
+  padding-top: 0.7em;
+  padding-bottom: 0.7em;
+}
+.ai-msg.ai hr { border: 0; border-top: 1px solid var(--line); margin: 0.9rem 0; }

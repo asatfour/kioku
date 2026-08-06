@@ -37,6 +37,8 @@ const app = {
   todayNewByDeck: {},
   /** 印を付けたカードだけに絞って学習する */
   onlyFlagged: false,
+  /** 「さらに続ける」で今日だけ上乗せする枚数 */
+  extra: null,
 };
 
 const DEFAULT_SETTINGS = {
@@ -186,10 +188,22 @@ async function showHome() {
   fb.classList.toggle("on", app.onlyFlagged);
   fb.classList.toggle("hidden", flagged === 0 && !app.onlyFlagged);
   fb.textContent = app.onlyFlagged ? `🚩 解除` : `🚩 ${flagged}`;
-  $("#btn-study-all").textContent = q.counts.total
-    ? `学習をはじめる（${q.counts.total}枚）`
-    : "今日のぶんは終わりました";
-  $("#btn-study-all").disabled = q.counts.total === 0;
+  // 今日のぶんが尽きても、まだ出せる札が残っているならホームから続けられるようにする。
+  // （終了画面の「制限を超えて続ける」はホームに戻ると押せなくなり、行き止まりだった）
+  const extra = (q.available?.review ?? 0) + (q.available?.new ?? 0);
+  const btnStudy = $("#btn-study-all");
+  btnStudy.dataset.more = "";
+  if (q.counts.total) {
+    btnStudy.textContent = `学習をはじめる（${q.counts.total}枚）`;
+    btnStudy.disabled = false;
+  } else if (extra) {
+    btnStudy.textContent = `今日のぶんは終わり — さらに続ける（あと${extra}枚）`;
+    btnStudy.disabled = false;
+    btnStudy.dataset.more = "1";
+  } else {
+    btnStudy.textContent = "今日のぶんは終わりました";
+    btnStudy.disabled = true;
+  }
 }
 
 const deckNameById = () => new Map(app.decks.map((d) => [d.id, d.name]));
@@ -216,7 +230,17 @@ async function refreshTodayCounts() {
 }
 
 function currentQueue() {
-  const mode = app.modes.find((m) => m.id === app.modeId) || app.modes[1];
+  const base = app.modes.find((m) => m.id === app.modeId) || app.modes[1];
+  // 「さらに続ける」で上乗せした分を足す（設定そのものは変えない）
+  const mode = app.extra
+    ? {
+        ...base,
+        limits: {
+          new: (base.limits?.new ?? 0) + app.extra.new,
+          review: (base.limits?.review ?? 0) + app.extra.review,
+        },
+      }
+    : base;
   return buildQueue({
     cards: app.cards,
     noteById: app.notes,
@@ -364,6 +388,16 @@ function startStudy() {
   enterStudy();
   saveSession();
   nextCard();
+}
+
+/**
+ * 上限を超えて続ける。
+ * モードの設定そのものを書き換えると「その日だけ多めにやった」が翌日以降も効いてしまうので、
+ * この起動中だけの上乗せとして持つ。
+ */
+function studyMore() {
+  app.extra = { new: (app.extra?.new ?? 0) + 20, review: (app.extra?.review ?? 0) + 50 };
+  startStudy();
 }
 
 function enterStudy() {
@@ -1101,6 +1135,11 @@ function renderMarkdown(src) {
     const line = raw.trimEnd();
     if (!line.trim()) { flushPara(); closeList(); continue; }
 
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      flushPara(); closeList();
+      out.push("<hr>");            // 区切り線。素のまま出すと「---」が見える
+      continue;
+    }
     const h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h) {
       flushPara(); closeList();
@@ -1947,13 +1986,12 @@ function wireUI() {
   $("#btn-home").onclick = showHome;
   $("#btn-stats").onclick = showStats;
   $("#btn-settings").onclick = showSettings;
-  $("#btn-study-all").onclick = startStudy;
-  $("#btn-back-home").onclick = showHome;
-  $("#btn-more").onclick = () => {
-    const m = app.modes.find((x) => x.id === app.modeId);
-    m.limits = { new: m.limits.new + 20, review: m.limits.review + 50 };
+  $("#btn-study-all").onclick = () => {
+    if ($("#btn-study-all").dataset.more === "1") return studyMore();
     startStudy();
   };
+  $("#btn-back-home").onclick = showHome;
+  $("#btn-more").onclick = studyMore;
   $("#btn-show").onclick = async () => {
     app.revealed = true;
     await drawCard(true);
