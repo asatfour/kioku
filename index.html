@@ -79,6 +79,7 @@
           <input type="file" id="file-import" accept=".apkg,.colpkg" hidden>
           読み込む
         </label>
+        <button id="btn-new-card" class="btn small">＋作る</button>
         <button id="btn-collapse-all" class="btn small">たたむ</button>
         <button id="btn-only-flagged" class="btn small" title="印を付けたカードだけ">🚩</button>
         <button id="btn-import-url" class="btn small">URL</button>
@@ -168,8 +169,12 @@
 <!-- ===================== カードを直す ===================== -->
 <aside id="edit-panel" class="panel hidden">
   <div class="panel-head">
-    <h2>✏️ カードを直す</h2>
+    <h2 id="edit-title">✏️ カードを直す</h2>
     <button id="edit-close" class="icon-btn">✕</button>
+  </div>
+  <div id="edit-target" class="hidden">
+    <label class="field"><span>入れるデッキ</span><select id="edit-deck"></select></label>
+    <label class="field"><span>カードの型</span><select id="edit-notetype"></select></label>
   </div>
   <div id="edit-fields"></div>
   <p class="hint">

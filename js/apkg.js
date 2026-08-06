@@ -505,7 +505,9 @@ export async function writeApkg(data, deps) {
     const flds = n.fields.join(FIELD_SEP);
     insNote.run([
       n.id,
-      n.guid,
+      // 取り込んだノートには必ずあるが、アプリ内で作ったものには無いことがある。
+      // ここが undefined だと書き出し全体が落ちるので、無ければその場で作る。
+      n.guid ?? "k" + n.id.toString(36),
       n.mid,
       n.mod ?? nowSec,
       n.tags.length ? " " + n.tags.join(" ") + " " : "",

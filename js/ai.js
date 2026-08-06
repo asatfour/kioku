@@ -85,7 +85,7 @@ function withTruncationNote(text, truncated) {
  * @param {{prompt:string, context:object, settings:{provider:string,key:string,model:string,base:string}}} args
  * @returns {Promise<string>}
  */
-export async function askAI({ prompt, context, settings }) {
+export async function askAI({ prompt, context, settings, onChunk = null }) {
   const sys = systemPrompt(context);
   const { provider, key } = settings;
   const model = settings.model || DEFAULT_MODELS[provider];
@@ -106,6 +106,11 @@ export async function askAI({ prompt, context, settings }) {
     const url = "https://claude.ai/new?q=" + encodeURIComponent(full.slice(0, 1200));
     window.open(url, "_blank", "noopener");
     return "外部の Claude を新しいタブで開きました。カードの内容がURLに載る点にご注意ください。";
+  }
+
+  // 逐次表示できる呼び出し元には、届いたそばから渡す
+  if (onChunk) {
+    return streamAI({ provider, model, key, base: settings.base, sys, prompt, onChunk });
   }
 
   if (provider === "gemini") {
@@ -171,6 +176,95 @@ export async function askAI({ prompt, context, settings }) {
   const j = await handle(res);
   const choice = j.choices?.[0];
   return withTruncationNote(choice?.message?.content ?? "", choice?.finish_reason === "length");
+}
+
+/**
+ * SSE（サーバから少しずつ届く形式）を1件ずつ読む。
+ * 長い解説で「…」のまま数十秒待たされるのを避けるために使う。
+ */
+async function* sseEvents(res) {
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        yield JSON.parse(data);
+      } catch {
+        /* 途中で切れた行は捨てる */
+      }
+    }
+  }
+}
+
+/** 逐次で受け取る。onChunk には「これまでの全文」ではなく「増えた分」を渡す。 */
+async function streamAI({ provider, model, key, base, sys, prompt, onChunk }) {
+  let res;
+  let pick;
+  if (provider === "gemini") {
+    res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: sys }] },
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: MAX_TOKENS,
+            thinkingConfig: { thinkingBudget: 0 },
+          },
+        }),
+      }
+    );
+    pick = (j) => j.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "";
+  } else if (provider === "claude") {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model, max_tokens: MAX_TOKENS, system: sys, stream: true,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    pick = (j) => (j.type === "content_block_delta" && j.delta?.type === "text_delta" ? j.delta.text : "");
+  } else {
+    const b = (base || "https://api.openai.com/v1").replace(/\/$/, "");
+    res = await fetch(b + "/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model, max_tokens: MAX_TOKENS, temperature: 0.3, stream: true,
+        messages: [{ role: "system", content: sys }, { role: "user", content: prompt }],
+      }),
+    });
+    pick = (j) => j.choices?.[0]?.delta?.content ?? "";
+  }
+
+  if (!res.ok) await handle(res); // ここで必ず例外になる
+  let full = "";
+  for await (const ev of sseEvents(res)) {
+    const t = pick(ev);
+    if (!t) continue;
+    full += t;
+    onChunk(t, full);
+  }
+  return full || "(空の応答)";
 }
 
 async function handle(res) {

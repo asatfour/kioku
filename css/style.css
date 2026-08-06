@@ -567,3 +567,7 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 .deck-stat-head .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stack { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--line); margin-top: 4px; }
 .stack > div { height: 100%; }
+
+/* ------------------------------------------------ 図の拡大 */
+#img-viewer img { transform-origin: center center; touch-action: none; will-change: transform; }
+#img-viewer.zoomed { cursor: grab; }

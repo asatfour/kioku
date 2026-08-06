@@ -1133,9 +1133,18 @@ async function sendAI(prompt, ctx) {
   $("#ai-status").textContent = "考えています…";
   const card = app.current;
   try {
-    const answer = await askAI({ prompt, context: ctx, settings: aiSettings() });
+    // 届いたそばから出す。長い解説で無言のまま待たされないように。
+    const answer = await askAI({
+      prompt,
+      context: ctx,
+      settings: aiSettings(),
+      onChunk: (_delta, full) => {
+        holder.textContent = full;
+        log.scrollTop = log.scrollHeight;
+      },
+    });
     holder.textContent = answer;
-    typeset(holder);
+    typeset(holder); // 数式は全部そろってから組む
     if (card) await appendAIHistory(card, { q: prompt, a: answer, at: Date.now() });
   } catch (e) {
     holder.textContent = "失敗しました: " + e.message;
@@ -1396,6 +1405,94 @@ async function saveSettings() {
   makeFsrs();
 }
 
+// ------------------------------------------------ 図の拡大
+
+const zoom = { scale: 1, x: 0, y: 0 };
+
+function applyZoom() {
+  const img = $("#img-viewer img");
+  img.style.transform = `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.scale})`;
+  $("#img-viewer").classList.toggle("zoomed", zoom.scale > 1);
+}
+
+function resetZoom() {
+  zoom.scale = 1;
+  zoom.x = 0;
+  zoom.y = 0;
+  applyZoom();
+}
+
+/**
+ * 図を指で拡げられるようにする。
+ * 細かい図はタップで開いても読めないことがあり、そこで学習が止まる。
+ */
+function setupPinchZoom() {
+  const el = $("#img-viewer");
+  let start = null;   // 2本指の初期距離とそのときの倍率
+  let pan = null;     // 1本指で動かしているときの起点
+  let lastTap = 0;
+  let moved = false;  // 動かしたか。動かした指離しをダブルタップと取り違えない
+
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const clamp = () => {
+    zoom.scale = Math.min(6, Math.max(1, zoom.scale));
+    if (zoom.scale === 1) { zoom.x = 0; zoom.y = 0; }
+  };
+
+  el.addEventListener("touchstart", (e) => {
+    moved = false;
+    if (e.touches.length === 2) {
+      start = { d: dist(e.touches), scale: zoom.scale };
+      pan = null;
+    } else if (e.touches.length === 1 && zoom.scale > 1) {
+      pan = { x: e.touches[0].clientX - zoom.x, y: e.touches[0].clientY - zoom.y };
+    }
+  }, { passive: true });
+
+  el.addEventListener("touchmove", (e) => {
+    if (start && e.touches.length === 2) {
+      e.preventDefault();
+      moved = true;
+      zoom.scale = start.scale * (dist(e.touches) / start.d);
+      clamp();
+      applyZoom();
+    } else if (pan && e.touches.length === 1) {
+      e.preventDefault();
+      moved = true;
+      zoom.x = e.touches[0].clientX - pan.x;
+      zoom.y = e.touches[0].clientY - pan.y;
+      applyZoom();
+    }
+  }, { passive: false });
+
+  el.addEventListener("touchend", (e) => {
+    if (e.touches.length === 0) { start = null; pan = null; }
+    // 拡げたり動かしたりした直後の指離しは、叩いた回数に数えない
+    if (moved) { lastTap = 0; moved = false; return; }
+    // 素早く2回叩いたら等倍と2.5倍を行き来する
+    const now = Date.now();
+    if (e.changedTouches.length === 1 && now - lastTap < 300) {
+      zoom.scale = zoom.scale > 1 ? 1 : 2.5;
+      zoom.x = 0;
+      zoom.y = 0;
+      clamp();
+      applyZoom();
+      lastTap = 0;
+      return;
+    }
+    lastTap = now;
+  }, { passive: true });
+
+  // PCではホイールで拡大
+  el.addEventListener("wheel", (e) => {
+    if (el.classList.contains("hidden")) return;
+    e.preventDefault();
+    zoom.scale *= e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    clamp();
+    applyZoom();
+  }, { passive: false });
+}
+
 // ------------------------------------------------ 検索
 
 function showSearch() {
@@ -1483,29 +1580,115 @@ async function searchAction(cardId, act) {
 // ------------------------------------------------ カードを直す
 
 let editingNote = null;
+let creatingNew = false;
+
+function fieldsFormFor(mid, values = []) {
+  const nt = app.notetypes.get(mid);
+  $("#edit-fields").innerHTML = (nt?.fields ?? [])
+    .map((f, i) => `<label class="field edit-field">
+      <span>${escapeHtml(f.name)}</span>
+      <textarea data-fi="${i}" rows="4"></textarea>
+    </label>`)
+    .join("");
+  $$("#edit-fields textarea").forEach((t) => {
+    t.value = values[Number(t.dataset.fi)] ?? "";
+  });
+}
 
 function openEditor(note) {
   if (!note) return toast("このカードの問題が見つかりません");
+  creatingNew = false;
   editingNote = note;
-  const nt = app.notetypes.get(note.mid);
-  $("#edit-fields").innerHTML = (nt?.fields ?? []).
-    map((f, i) => `<label class="field edit-field">
-      <span>${escapeHtml(f.name)}</span>
-      <textarea data-fi="${i}" rows="4"></textarea>
-    </label>`).join("");
-  $$("#edit-fields textarea").forEach((t) => {
-    t.value = note.fields[Number(t.dataset.fi)] ?? "";
-  });
+  $("#edit-title").textContent = "✏️ カードを直す";
+  $("#edit-target").classList.add("hidden");
+  $("#edit-revert").classList.remove("hidden");
+  fieldsFormFor(note.mid, note.fields);
+  $("#edit-panel").classList.remove("hidden");
+}
+
+/** 気づいたことをその場でカードにする */
+function openNewCard() {
+  if (!app.notetypes.size) return toast("先にデッキを1つ読み込んでください（型が必要です）");
+  creatingNew = true;
+  editingNote = null;
+  $("#edit-title").textContent = "＋ カードを作る";
+  $("#edit-revert").classList.add("hidden");
+  $("#edit-target").classList.remove("hidden");
+
+  // 入れ先は、いま選んでいるデッキ→末端のデッキ の順で妥当なものを既定にする
+  const leaves = app.decks.filter((d) => !hasChildren(d.name));
+  const preferred = app.selectedDeckIds?.length
+    ? app.decks.find((d) => app.selectedDeckIds.includes(d.id) && !hasChildren(d.name))
+    : null;
+  $("#edit-deck").innerHTML = (leaves.length ? leaves : app.decks)
+    .map((d) => `<option value="${d.id}">${escapeHtml(d.name)}</option>`)
+    .join("");
+  if (preferred) $("#edit-deck").value = String(preferred.id);
+
+  // 項目が少ない型（表・裏だけ）を既定にすると迷いにくい
+  const types = [...app.notetypes.values()].sort((a, b) => a.fields.length - b.fields.length);
+  $("#edit-notetype").innerHTML = types
+    .map((n) => `<option value="${n.id}">${escapeHtml(n.name ?? "型")}（${n.fields.length}項目）</option>`)
+    .join("");
+  $("#edit-notetype").onchange = () => fieldsFormFor(Number($("#edit-notetype").value));
+  fieldsFormFor(types[0].id);
   $("#edit-panel").classList.remove("hidden");
 }
 
 async function saveEdit() {
+  const collect = (n) => {
+    const out = new Array(n).fill("");
+    for (const t of $$("#edit-fields textarea")) out[Number(t.dataset.fi)] = t.value;
+    return out;
+  };
+
+  if (creatingNew) {
+    const mid = Number($("#edit-notetype").value);
+    const did = Number($("#edit-deck").value);
+    const nt = app.notetypes.get(mid);
+    const fields = collect(nt.fields.length);
+    if (!fields.some((v) => v.trim())) return toast("中身が空です");
+
+    const id = Date.now();
+    // guid は Anki がノートを同一視するための値。無いと書き出しに失敗する。
+    const guid = Array.from(crypto.getRandomValues(new Uint8Array(8)))
+      .map((b) => b.toString(36))
+      .join("")
+      .slice(0, 10);
+    const note = { id, guid, mid, fields, tags: [], mod: Math.floor(id / 1000), usn: -1 };
+    // 型が持つテンプレートの数だけカードができる（本家と同じ考え方）
+    const maxPos = app.cards.reduce((m, c) => Math.max(m, c.newPos ?? 0), 0);
+    const cards = nt.templates.map((_, ord) => ({
+      id: id + ord, nid: id, did, ord,
+      state: State.New, due: Date.now(), step: 0,
+      stability: null, difficulty: null, lastReview: null,
+      reps: 0, lapses: 0, suspended: false, flags: 0, newPos: maxPos + 1,
+    }));
+    try {
+      await store.put("notes", note);
+      await store.putAll("cards", cards);
+    } catch (e) {
+      return toast("保存できませんでした: " + e.message);
+    }
+    app.notes.set(id, note);
+    app.cards.push(...cards);
+    $("#edit-panel").classList.add("hidden");
+    toast(`カードを${cards.length}枚 作りました`);
+    await showHome();
+    return;
+  }
+
   if (!editingNote) return;
   const fields = [...editingNote.fields];
-  for (const t of $$("#edit-fields textarea")) fields[Number(t.dataset.fi)] = t.value;
+  const got = collect(fields.length);
+  got.forEach((v, i) => { fields[i] = v; });
   const next = { ...editingNote, fields, mod: Math.floor(Date.now() / 1000) };
+  try {
+    await store.put("notes", next);
+  } catch (e) {
+    return toast("保存できませんでした: " + e.message);
+  }
   app.notes.set(next.id, next);
-  await store.put("notes", next);
   editingNote = next;
   $("#edit-panel").classList.add("hidden");
   toast("直しました");
@@ -1706,12 +1889,18 @@ function wireUI() {
   $("#card-content").addEventListener("click", (e) => {
     const img = e.target.closest("img");
     if (!img) return;
+    resetZoom();
     $("#img-viewer img").src = img.src;
     $("#img-viewer").classList.remove("hidden");
   });
-  const closeViewer = () => $("#img-viewer").classList.add("hidden");
-  $("#img-viewer").onclick = closeViewer;
+  const closeViewer = () => {
+    $("#img-viewer").classList.add("hidden");
+    resetZoom();
+  };
+  // 拡大中に閉じないよう、背景の素押しだけで閉じる
+  $("#img-viewer").onclick = (e) => { if (e.target.id === "img-viewer" && zoom.scale === 1) closeViewer(); };
   $("#img-close").onclick = closeViewer;
+  setupPinchZoom();
   $("#btn-ai").onclick = openAI;
   $("#ai-close").onclick = () => $("#ai-panel").classList.add("hidden");
   $("#btn-suspend").onclick = async () => {
@@ -1768,6 +1957,7 @@ function wireUI() {
     searchAction(Number(hit.dataset.cid), b.dataset.act);
   };
   $("#btn-edit").onclick = () => openEditor(app.notes.get(app.current?.nid));
+  $("#btn-new-card").onclick = openNewCard;
   $("#edit-close").onclick = () => $("#edit-panel").classList.add("hidden");
   $("#edit-save").onclick = saveEdit;
   $("#edit-revert").onclick = () => openEditor(editingNote);
