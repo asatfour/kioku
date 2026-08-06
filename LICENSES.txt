@@ -44,3 +44,14 @@ Anki との関係について
   Anki は Ankitects Pty Ltd の著作物で AGPL-3.0、AnkiDroid は GPL-3.0 です。
   https://github.com/ankitects/anki
   https://github.com/ankidroid/Anki-Android
+
+  旧形式（schema11）の表定義について
+    .apkg の中身は SQLite で、本家 Anki は列を名前だけでなく位置でも読みます。
+    そのため表・列・型・並び順・索引名は互換性のために一意に決まり、実装側に
+    選択の余地がありません。この構造は .apkg ファイル自身（sqlite_master）に
+    書かれており、次の手順で誰でも確認できます。
+      zip を開いて collection.anki2 を取り出し
+      SELECT sql FROM sqlite_master WHERE sql IS NOT NULL;
+    js/apkg.js に置いてあるのはこの不可避な構造だけです。本家や genanki が
+    付けている桁揃え・位置の註記・PRAGMA・BEGIN TRANSACTION / COMMIT は
+    含めていません。

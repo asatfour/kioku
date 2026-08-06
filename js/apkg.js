@@ -353,6 +353,22 @@ export function toStudyCard(c, crtMs, lastReviewMs = null) {
 // 書き出し（レガシー schema11）
 // ---------------------------------------------------------------------------
 
+// この定義の出自（2026-08-07 に確認。公開・配布の前提として残す）
+//
+//   .apkg の中身は SQLite で、本家 Anki は列を名前だけでなく「位置」でも読む。
+//   だから表・列・型・並び順・索引名は互換性のために一意に決まり、こちらに
+//   選ぶ余地がない。実際、.apkg の sqlite_master を取り出すと下と同じ構造が
+//   そのまま書かれている。確かめ方:
+//     zip を開いて collection.anki2 を取り出し
+//     SELECT sql FROM sqlite_master WHERE sql IS NOT NULL;
+//
+//   ここに書いてあるのはその不可避な構造だけで、書式は写していない。
+//   本家や genanki が付けている桁揃え・/* 0 */ の位置註記・PRAGMA・
+//   BEGIN TRANSACTION / COMMIT は、いずれも含んでいない。
+//   （比較: 構造は12文すべて同値、生の文字列は 1651 対 2914 バイトで不一致）
+//
+//   Anki 本体（AGPL-3.0）および AnkiDroid（GPL-3.0）のコードは、この行を
+//   含めどこにも取り込んでいない。詳しくは LICENSES.txt を参照。
 const SCHEMA11 = `
 CREATE TABLE col (id integer primary key, crt integer not null, mod integer not null,
   scm integer not null, ver integer not null, dty integer not null, usn integer not null,
