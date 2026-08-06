@@ -310,17 +310,22 @@
       学習履歴はこの端末の中にだけあります。<strong>ブラウザの「閲覧データを削除」で消えます。</strong>
       ときどき .apkg に書き出しておけば、機種変更のときも Anki 本体にも戻せます。
     </p>
-    <label class="field"><span>書き出しを催促する間隔</span>
+    <p class="hint">
+      <strong>控えは自動で保存されます。</strong>下の間隔を過ぎていたら、次に「学習をはじめる」を押したときに
+      端末のダウンロード先へ静かに保存します（追加の操作は不要）。ブラウザの保存領域の外なので、
+      「閲覧データの削除」やアプリの削除では消えません。
+    </p>
+    <label class="field"><span>自動で控える間隔</span>
       <select id="set-backup-days">
         <option value="3">3日</option>
         <option value="7">7日</option>
         <option value="14">14日</option>
         <option value="30">30日</option>
-        <option value="0">催促しない</option>
+        <option value="0">自動で控えない</option>
       </select>
     </label>
     <p class="hint" id="last-export-note">まだ書き出していません。</p>
-    <button id="btn-export-hist" class="btn primary">学習履歴だけを控える（軽い・ふだんはこちら）</button>
+    <button id="btn-export-hist" class="btn primary">いま控える（ドライブ等へ送る）</button>
     <p class="hint">
       デッキ本体は含めず、<strong>どこまで覚えたかだけ</strong>を出します。数十KBなのでメモやメールにも置けます。
       戻すときは、同じデッキを読み込んでから下の「控えを戻す」で重ねてください。

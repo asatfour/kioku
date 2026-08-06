@@ -872,8 +872,30 @@ async function gunzip(blob) {
   return new Response(blob.stream().pipeThrough(ds)).text();
 }
 
-async function exportHistory() {
-  busy("学習履歴をまとめています…");
+/**
+ * 利用者に「ときどき書き出してください」と頼るのは、いつか失うのと同じ。
+ * かといってブラウザは操作なしにファイルを書けない。
+ * そこで「学習をはじめる」など、利用者がどのみち押すタップに相乗りして、
+ * 期限が来ていれば裏で控えを保存する。追加の操作はゼロ。
+ *
+ * 置き場所は端末のダウンロード先。ブラウザの保存領域の外なので、
+ * 「閲覧データの削除」やアプリの削除では消えない。
+ */
+async function autoBackupIfDue() {
+  try {
+    const days = backupDays();
+    if (!days || !app.cards.length) return;
+    const last = await store.getMeta("lastExportAt", null);
+    const elapsed = last == null ? Infinity : (Date.now() - last) / 86400000;
+    if (elapsed < days) return;
+    await exportHistory({ silent: true });
+  } catch (e) {
+    console.warn("自動の控えに失敗:", e);
+  }
+}
+
+async function exportHistory({ silent = false } = {}) {
+  if (!silent) busy("学習履歴をまとめています…");
   try {
     const revlog = await store.revlogSince(0);
     const payload = {
@@ -889,21 +911,31 @@ async function exportHistory() {
     };
     const blob = await gzip(JSON.stringify(payload));
     const name = `記憶_履歴_${new Date().toISOString().slice(0, 10)}.json.gz`;
-    const file = new File([blob], name, { type: "application/gzip" });
-    if (navigator.canShare?.({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: name });
-      } catch (e) {
-        if (e?.name !== "AbortError") downloadBlob(blob, name);
-      }
-    } else {
+
+    if (silent) {
+      // 自動のときは共有画面を出さない（学習を始めようとしている人の邪魔をしない）
       downloadBlob(blob, name);
+    } else {
+      const file = new File([blob], name, { type: "application/gzip" });
+      if (navigator.canShare?.({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: name });
+        } catch (e) {
+          if (e?.name !== "AbortError") downloadBlob(blob, name);
+        }
+      } else {
+        downloadBlob(blob, name);
+      }
     }
     await store.setMeta("lastExportAt", Date.now());
     await refreshBackupBanner();
-    toast(`学習履歴を書き出しました（${(blob.size / 1024).toFixed(0)}KB）`);
+    toast(
+      silent
+        ? `学習履歴の控えを保存しました（${(blob.size / 1024).toFixed(0)}KB・自動）`
+        : `学習履歴を書き出しました（${(blob.size / 1024).toFixed(0)}KB）`
+    );
   } finally {
-    unbusy();
+    if (!silent) unbusy();
   }
 }
 
@@ -2161,6 +2193,7 @@ function wireUI() {
   $("#btn-stats").onclick = showStats;
   $("#btn-settings").onclick = showSettings;
   $("#btn-study-all").onclick = async () => {
+    autoBackupIfDue(); // このタップに相乗りして控えを保存する（待たせない）
     const more = $("#btn-study-all").dataset.more || "";
     if (more === "1") return studyMore();
     if (more.startsWith("switch:")) {
