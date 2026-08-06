@@ -684,12 +684,18 @@ function updateGradeLabels() {
 
 /** 採点した直後だけ「戻す」を目立つ位置に出す（押し間違いのその場復帰） */
 function showUndoStrip(rating) {
+  // 毎回出すと、1枚ごとに帯が現れて学習の邪魔になる。
+  // 押し間違いが疑わしいとき——解答を見た直後に叩かれたとき——だけ出す。
+  // ふつうに答えたときは黙る（取り消しは下の「↩ 取り消し」からいつでもできる）。
+  const quick = app.revealedAt && Date.now() - app.revealedAt < 1200;
+  if (!quick) return;
+
   const names = { 1: "思い出せない", 2: "あやふや", 3: "思い出せた", 4: "即答" };
   const strip = $("#undo-strip");
-  $("#undo-text").textContent = `「${names[rating]}」で記録しました`;
+  $("#undo-text").textContent = `「${names[rating]}」で記録`;
   strip.classList.remove("hidden");
   clearTimeout(showUndoStrip._t);
-  showUndoStrip._t = setTimeout(() => strip.classList.add("hidden"), 4000);
+  showUndoStrip._t = setTimeout(() => strip.classList.add("hidden"), 2500);
 }
 
 async function grade(rating) {
@@ -934,14 +940,16 @@ async function exportHistory({ silent = false } = {}) {
     }
     await store.setMeta("lastExportAt", Date.now());
     await refreshBackupBanner();
-    const kb = (blob.size / 1024).toFixed(0);
-    toast(
-      savedInApp
-        ? `控えを保存しました（${kb}KB・アプリに保管、機種変更でも戻ります）`
-        : silent
-          ? `学習履歴の控えを保存しました（${kb}KB・自動）`
+    // 自動の控えは裏方の仕事。学習を始めようとしている人に知らせる必要はない。
+    // 保存できたかどうかは 設定→バックアップ の「最後の控え」で確認できる。
+    if (!silent) {
+      const kb = (blob.size / 1024).toFixed(0);
+      toast(
+        savedInApp
+          ? `控えを保存しました（${kb}KB・アプリに保管、機種変更でも戻ります）`
           : `学習履歴を書き出しました（${kb}KB）`
-    );
+      );
+    }
   } finally {
     if (!silent) unbusy();
   }
@@ -2244,6 +2252,7 @@ function wireUI() {
   $("#btn-more").onclick = studyMore;
   $("#btn-show").onclick = async () => {
     app.revealed = true;
+    app.revealedAt = Date.now(); // 押し間違いの判定に使う
     await drawCard(true);
   };
   $$(".grade").forEach((b) => (b.onclick = () => grade(Number(b.dataset.rating))));
