@@ -571,3 +571,86 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 /* ------------------------------------------------ 図の拡大 */
 #img-viewer img { transform-origin: center center; touch-action: none; will-change: transform; }
 #img-viewer.zoomed { cursor: grab; }
+
+/* ================================================ 見た目の作り直し（2026-08-06） */
+
+/* ---- 見出しが縦に潰れないようにする ---- */
+.section-head { flex-wrap: wrap; gap: 0.5rem; }
+.section-head h2 { flex: 0 0 auto; white-space: nowrap; margin: 0; }
+.row-actions { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+.btn { white-space: nowrap; }
+.btn.small { padding: 0 0.7rem; }
+
+/* ---- AIパネル：入力欄が画面外に出ないようにする ---- */
+.panel {
+  display: flex;
+  flex-direction: column;
+  max-height: min(86vh, 720px);
+  padding-bottom: calc(0.6rem + env(safe-area-inset-bottom));
+}
+.panel-head { flex: none; }
+.panel-head h2 { font-size: 1rem; margin: 0; }
+
+/* 質問の候補は1行に収めて横に流す（3行占有していた） */
+#ai-quick {
+  flex: none;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
+}
+#ai-quick::-webkit-scrollbar { display: none; }
+#ai-quick button { flex: none; white-space: nowrap; }
+
+#ai-log { flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; }
+#ai-form { flex: none; }
+
+/* ---- AIの回答を読めるようにする ---- */
+.ai-msg { white-space: normal; line-height: 1.75; }
+.ai-msg.me {
+  font-weight: 600;
+  white-space: pre-wrap;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px 12px 12px 4px;
+}
+.ai-msg.ai { color: var(--fg); padding: 0.7rem 0.85rem; }
+/* 前に聞いた分も薄くしない。読めないと残す意味がない */
+.ai-msg.old { opacity: 1; }
+.ai-msg.ai.old { border-left: 3px solid var(--line); }
+
+.ai-msg.ai > *:first-child { margin-top: 0; }
+.ai-msg.ai > *:last-child { margin-bottom: 0; }
+.ai-msg.ai p { margin: 0.55rem 0; }
+.ai-msg.ai h3, .ai-msg.ai h4, .ai-msg.ai h5, .ai-msg.ai h6 {
+  margin: 0.9rem 0 0.35rem;
+  font-size: 0.95rem;
+  color: var(--accent);
+  font-weight: 700;
+}
+.ai-msg.ai ul, .ai-msg.ai ol { margin: 0.45rem 0; padding-left: 1.3rem; }
+.ai-msg.ai li { margin: 0.25rem 0; }
+.ai-msg.ai strong { color: var(--fg); font-weight: 700; }
+.ai-msg.ai code {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+  padding: 0 0.3em; font-size: 0.9em;
+}
+.ai-msg.ai mjx-container { overflow-x: auto; overflow-y: hidden; max-width: 100%; }
+
+/* ---- 学習中は通知帯を出さない（カードの邪魔になる） ---- */
+body.studying #banners { display: none; }
+
+/* ---- 仕上げ ---- */
+/* AIの見出しをもう少し立てる */
+.ai-msg.ai h3, .ai-msg.ai h4, .ai-msg.ai h5, .ai-msg.ai h6 {
+  font-size: 1rem;
+  padding-bottom: 0.2rem;
+  border-bottom: 1px solid var(--line);
+}
+/* 質問の候補が横に続いていることを示す（右端をぼかす） */
+#ai-quick-wrap { position: relative; flex: none; }
+#ai-quick-wrap::after {
+  content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 28px;
+  background: linear-gradient(to right, transparent, var(--bg-elev));
+  pointer-events: none;
+}

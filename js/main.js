@@ -148,6 +148,8 @@ function show(viewId) {
   $$(".view").forEach((v) => v.classList.toggle("hidden", v.id !== viewId));
   $("#ai-panel").classList.add("hidden");
   $("#edit-panel").classList.add("hidden");
+  // 学習中は通知帯を引っ込める（カードの上に居座ると邪魔になる）
+  document.body.classList.toggle("studying", viewId === "view-study");
   window.scrollTo(0, 0);
 }
 
@@ -191,6 +193,7 @@ async function showHome() {
 }
 
 const deckNameById = () => new Map(app.decks.map((d) => [d.id, d.name]));
+const deckNameOf = (did) => app.decks.find((d) => d.id === did)?.name;
 const topDeckName = (did) => (app.decks.find((d) => d.id === did)?.name ?? "").split("::")[0];
 
 /**
@@ -308,8 +311,16 @@ function renderDeckList() {
     return false;
   };
 
+  // 配下も含めて1枚も無いデッキは出さない（Anki既定の "Default" が並ぶだけになる）
+  const empty = (d) => {
+    const p = per.get(d.id);
+    return !p || (p.new === 0 && p.learn === 0 && p.rev === 0)
+      ? !app.cards.some((c) => c.did === d.id || (deckNameOf(c.did) ?? "").startsWith(d.name + "::"))
+      : false;
+  };
+
   $("#deck-list").innerHTML = sorted
-    .filter((d) => !hidden(d.name))
+    .filter((d) => !hidden(d.name) && !empty(d))
     .map((d) => {
       const p = per.get(d.id) || { new: 0, learn: 0, rev: 0 };
       const depth = Math.min(3, d.name.split("::").length - 1);
@@ -1063,6 +1074,57 @@ function toAnkiCard(c, crtMs) {
  * せっかく解説してもらっても消えていたら、次に同じカードが出たときにまた一から聞くことになる。
  * 履歴はノート単位（表裏どちらのカードでも同じものが出る）で meta に持つ。
  */
+/**
+ * AIの回答は Markdown で返ってくる。素のまま出すと `####` や `**` が見えて読みにくいので、
+ * 見出し・強調・箇条書きだけを組む。数式は MathJax に渡すため \( \) はそのまま残す。
+ */
+function renderMarkdown(src) {
+  const esc = (s) =>
+    String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const inline = (s) =>
+    esc(s)
+      .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+
+  const out = [];
+  let list = null;   // "ul" | "ol"
+  let para = [];
+  const flushPara = () => {
+    if (para.length) out.push(`<p>${inline(para.join("\n"))}</p>`);
+    para = [];
+  };
+  const closeList = () => {
+    if (list) { out.push(`</${list}>`); list = null; }
+  };
+
+  for (const raw of String(src).split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (!line.trim()) { flushPara(); closeList(); continue; }
+
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      flushPara(); closeList();
+      const lv = Math.min(6, h[1].length + 2); // 本文中なので h3 以下に落とす
+      out.push(`<h${lv}>${inline(h[2])}</h${lv}>`);
+      continue;
+    }
+    const ul = line.match(/^\s*[-*・]\s+(.*)$/);
+    const ol = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
+    if (ul || ol) {
+      flushPara();
+      const want = ul ? "ul" : "ol";
+      if (list !== want) { closeList(); out.push(`<${want}>`); list = want; }
+      out.push(`<li>${inline(ul ? ul[1] : ol[2])}</li>`);
+      continue;
+    }
+    closeList();
+    para.push(line);
+  }
+  flushPara();
+  closeList();
+  return out.join("");
+}
+
 const aiHistoryKey = (card) => `ai:${card.nid}`;
 const loadAIHistory = (card) => store.getMeta(aiHistoryKey(card), []);
 
@@ -1093,9 +1155,8 @@ async function openAI() {
       log.insertAdjacentHTML(
         "beforeend",
         `<div class="ai-msg me old">${escapeHtml(e.q)}</div>
-         <div class="ai-msg ai old"></div>`
+         <div class="ai-msg ai old">${renderMarkdown(e.a)}</div>`
       );
-      log.lastElementChild.textContent = e.a;
     }
     typeset(log);
     $("#ai-clear").onclick = async () => {
@@ -1139,11 +1200,11 @@ async function sendAI(prompt, ctx) {
       context: ctx,
       settings: aiSettings(),
       onChunk: (_delta, full) => {
-        holder.textContent = full;
+        holder.innerHTML = renderMarkdown(full);
         log.scrollTop = log.scrollHeight;
       },
     });
-    holder.textContent = answer;
+    holder.innerHTML = renderMarkdown(answer);
     typeset(holder); // 数式は全部そろってから組む
     if (card) await appendAIHistory(card, { q: prompt, a: answer, at: Date.now() });
   } catch (e) {
@@ -1926,7 +1987,7 @@ function wireUI() {
 
   const askUrl = () =>
     importFromUrl(prompt("デッキ（.apkg）の直リンクURLを貼り付けてください", "https://"));
-  $("#btn-import-url").onclick = askUrl;
+  if ($("#btn-import-url")) $("#btn-import-url").onclick = askUrl;
   $("#btn-import-url-empty").onclick = askUrl;
 
   // 通知帯
