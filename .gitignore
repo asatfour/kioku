@@ -1,0 +1,6 @@
+# 最終防衛線: 過去問PDF・分析データが誤って混入しても push させない。
+# 正規の配布物は .apkg のみ（tools/lawdeck/out/ からファイル名を決めて明示コピー）。
+*.pdf
+exam-corpus/
+data_tk/
+ocr_tk/

@@ -133,7 +133,7 @@
   </div>
 
   <section id="finished" class="hidden empty">
-    <h2>今日のぶんは終わりです</h2>
+    <h2 id="finished-title">今日のぶんは終わりです</h2>
     <p id="finished-detail" class="muted"></p>
     <button id="btn-more" class="btn">制限を超えて続ける</button>
     <button id="btn-back-home" class="btn primary">ホームへ</button>
@@ -146,6 +146,7 @@
     <h2>🤖 このカードについて聞く</h2>
     <button id="ai-close" class="icon-btn">✕</button>
   </div>
+  <div id="ai-drill" class="hidden"></div>
   <div id="ai-quick-wrap"><div id="ai-quick"></div></div>
   <div id="ai-log"></div>
   <form id="ai-form">
@@ -237,6 +238,11 @@
       <input type="range" id="set-fontsize" min="14" max="24" step="1">
       <output id="set-fontsize-out"></output>
     </label>
+    <label class="field"><span>行間</span>
+      <input type="range" id="set-lineheight" min="1.2" max="2" step="0.05">
+      <output id="set-lineheight-out"></output>
+    </label>
+    <p class="hint">小さくすると1画面に入る行数が増え、長い設問でもスクロールせずに読めます。デッキ側の指定より優先されます。</p>
   </details>
 
   <details class="card-panel">
@@ -409,6 +415,12 @@
     tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["\\[", "\\]"], ["$$", "$$"]] },
     options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
     startup: { typeset: false },
+    // 🔴 日本語の中に数式を混ぜると、既定のままでは**数式だけ小さく見える**。
+    //   MathJax の既定は matchFontHeight: true で、周囲フォントの **x-height**（小文字の高さ）に
+    //   合わせて拡縮する。日本語フォントは x-height が欧文より小さいので数式が縮み、
+    //   さらに分数の分子・分母は 0.71 倍されるため、実測で本文の半分ほどの大きさになっていた。
+    //   x-height 合わせを切り、全体を少し上げて本文と釣り合わせる。
+    chtml: { matchFontHeight: false, scale: 1.15 },
   };
 </script>
 <script src="vendor/tex-mml-chtml.js" id="MathJax-script" async></script>

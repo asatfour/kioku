@@ -310,6 +310,79 @@ export function buildQueue(opts) {
   };
 }
 
+/** 学習中カードを、期限前でも繰り上げてよい幅（本家と同じ20分） */
+export const LEARN_AHEAD_MS = 20 * 60000;
+
+/**
+ * 学習中カード（Learning / Relearning）のうち、まだ時刻が来ていないものを
+ * 出題列から抜き出して「待ち」に回す。
+ * 列の中に置いたままだと、10分空けるはずのカードが数枚後に出てしまう。
+ */
+export function splitPending(cards, now = Date.now()) {
+  const queue = [];
+  const pending = [];
+  for (const c of cards) {
+    const learning = c.state === State.Learning || c.state === State.Relearning;
+    (learning && c.due > now ? pending : queue).push(c);
+  }
+  return { queue, pending };
+}
+
+/**
+ * 次に出すカードを決める（毎回その場で決める）。
+ *
+ *  1. 時刻が来た学習中カード（いちばん早いもの）
+ *  2. 出題列の先頭。ただし直前と同じデッキ・同じノートが続くなら、
+ *     数枚先から別のデッキのものを繰り上げる（同じ単元を続けて解くと、
+ *     「いまはこの単元」という文脈そのものが答えの手がかりになってしまう）
+ *  3. 出題列が尽きたら、20分以内に時刻が来る学習中カードを繰り上げる
+ *  4. それも無ければ、次の学習中カードの時刻まで待つ
+ *
+ * @returns {{kind:"pending",index:number}|{kind:"queue",index:number}|{kind:"wait",until:number}|{kind:"done"}}
+ *   index は pending / queue の中の位置。queue のときは qIndex 以上。
+ */
+export function chooseNext({
+  queue, qIndex, pending, now = Date.now(), prev = null,
+  learnAheadMs = LEARN_AHEAD_MS, lookahead = 4,
+}) {
+  const earliest = (limit, avoidId = null) => {
+    let best = -1;
+    for (let i = 0; i < pending.length; i++) {
+      const c = pending[i];
+      if (c.due > limit) continue;
+      if (best < 0) { best = i; continue; }
+      // 直前に答えたカードは、ほかに候補があれば後回しにする
+      const bAvoid = pending[best].id === avoidId, cAvoid = c.id === avoidId;
+      if (bAvoid !== cAvoid ? bAvoid : c.due < pending[best].due) best = i;
+    }
+    return best;
+  };
+
+  const dueNow = earliest(now);
+  if (dueNow >= 0) return { kind: "pending", index: dueNow };
+
+  if (qIndex < queue.length) {
+    const clash = (c) => prev && (c.did === prev.did || c.nid === prev.nid);
+    if (!clash(queue[qIndex])) return { kind: "queue", index: qIndex };
+    const end = Math.min(queue.length, qIndex + 1 + lookahead);
+    for (let i = qIndex + 1; i < end; i++) {
+      // 学習中カードは期限どおりの位置を崩さない（入れ替えの相手にしない）
+      const s = queue[i].state;
+      if (s === State.Learning || s === State.Relearning) continue;
+      if (!clash(queue[i])) return { kind: "queue", index: i };
+    }
+    return { kind: "queue", index: qIndex };
+  }
+
+  const ahead = earliest(now + learnAheadMs, prev?.id);
+  if (ahead >= 0) return { kind: "pending", index: ahead };
+
+  if (pending.length) {
+    return { kind: "wait", until: Math.min(...pending.map((c) => c.due)) };
+  }
+  return { kind: "done" };
+}
+
 /** 今日の学習実績を revlog から数える */
 export function todayStats(revlog, now = Date.now(), rolloverHour = 4) {
   const start = dayStart(now, rolloverHour);

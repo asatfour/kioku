@@ -5,8 +5,9 @@ import * as store from "./store.js";
 import { readApkg, writeApkg, toStudyCard } from "./apkg.js";
 import { Fsrs, State, Rating, humanInterval, DEFAULT_PARAMETERS } from "./fsrs.js";
 import { renderCard, resolveMedia, stripHtml, sanitizeCardHtml, sanitizeCardCss } from "./render.js";
-import { buildQueue, DEFAULT_MODES, todayStats, forecast, dayStart, dayEnd } from "./queue.js";
-import { askAI, quickPrompts, buildContext } from "./ai.js";
+import { buildQueue, DEFAULT_MODES, todayStats, forecast, dayStart, dayEnd, splitPending, chooseNext } from "./queue.js";
+import { planCandidates } from "./plan.js";
+import { askAI, quickPrompts, buildContext, DRILL_ASK, drillJudge } from "./ai.js";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -25,6 +26,10 @@ const app = {
   selectedDeckIds: null,
   queue: [],
   qIndex: 0,
+  /** 学習中で、まだ出し直しの時刻が来ていないカード（時刻が来たら出題列に割り込ませる） */
+  learnPending: [],
+  /** 待ちの時刻が来たら自動で再開するためのタイマー */
+  waitTimer: null,
   current: null,
   revealed: false,
   shownAt: 0,
@@ -52,6 +57,14 @@ const DEFAULT_SETTINGS = {
   autoScrollToAnswer: true,
   /** カードの文字サイズ(px) */
   fontSize: 17,
+  /**
+   * カード本文の行間。
+   * 🔴 デッキ側のCSSが `.card{line-height:1.9}` のように行間を持っていると、
+   *   アプリの `.card-render{line-height:1.55}` は**負ける**（`.card` が本文の要素そのものを
+   *   指すため）。実機で「設問を読むのにスクロールが要る」状態になっていた原因がこれ。
+   *   ここを利用者の設定にして、デッキのCSSより後に流し込んで勝たせる。
+   */
+  lineHeight: 1.5,
   /** カード内に埋め込まれた「外部AIに聞く」リンクを隠す（アプリ内AIで代替するため） */
   hideCardAILinks: true,
   parameters: [...DEFAULT_PARAMETERS],
@@ -414,10 +427,13 @@ function renderDeckList() {
 
 function startStudy() {
   const q = currentQueue();
-  app.queue = q.cards;
+  const split = splitPending(q.cards);
+  app.queue = split.queue;
+  app.learnPending = split.pending;
   app.qIndex = 0;
+  app.current = null;
   app.counts = { new: q.counts.new, learning: q.counts.learning, review: q.counts.review };
-  if (!app.queue.length) {
+  if (!app.queue.length && !app.learnPending.length) {
     show("view-study");
     finishScreen(q);
     return;
@@ -425,6 +441,26 @@ function startStudy() {
   enterStudy();
   saveSession();
   nextCard();
+}
+
+/** 出し直し待ちの学習中カードだけが残ったとき。時刻が来たら自動で続ける */
+function waitScreen(until) {
+  $("#card-area").classList.add("hidden");
+  $("#answer-bar").classList.add("hidden");
+  $("#study-tools").classList.add("hidden");
+  $("#finished").classList.remove("hidden");
+  const mins = Math.max(1, Math.ceil((until - Date.now()) / 60000));
+  $("#finished-title").textContent = "ひと休み";
+  $("#finished-detail").textContent =
+    `覚え直し中のカードが ${app.learnPending.length} 枚あります。間を空けたほうが定着するので、` +
+    `${mins} 分後にもう一度出します（この画面のままで自動で始まります）。`;
+  $("#btn-more").classList.add("hidden");
+  clearTimeout(app.waitTimer);
+  app.waitTimer = setTimeout(() => {
+    if ($("#view-study")?.classList.contains("hidden")) return;
+    enterStudy();
+    nextCard();
+  }, Math.max(1000, until - Date.now()));
 }
 
 /**
@@ -475,6 +511,7 @@ function saveSession() {
     .setMeta("session", {
       ids: app.queue.map((c) => c.id),
       qIndex: app.qIndex,
+      pendingIds: app.learnPending.map((c) => c.id),
       modeId: app.modeId,
       deckIds: app.selectedDeckIds,
       at: Date.now(),
@@ -489,7 +526,7 @@ async function refreshResumeBanner() {
   if (!el || el.dataset.dismissed === "1") return;
   const s = await store.getMeta("session", null);
   const sameDay = s && s.at >= dayStart(Date.now(), app.settings.rolloverHour);
-  const left = s ? s.ids.length - s.qIndex : 0;
+  const left = s ? s.ids.length - s.qIndex + (s.pendingIds?.length ?? 0) : 0;
   if (!s || !sameDay || left <= 0) {
     el.classList.add("hidden");
     return;
@@ -511,7 +548,7 @@ async function resumeSession() {
     if (i < s.qIndex) idx = kept.length + 1;
     kept.push(c);
   });
-  if (!kept.length || idx >= kept.length) {
+  if (!kept.length || (idx >= kept.length && !(s.pendingIds?.length))) {
     await clearSession();
     return toast("続きはもう残っていません");
   }
@@ -519,6 +556,8 @@ async function resumeSession() {
   app.selectedDeckIds = s.deckIds ?? null;
   app.queue = kept;
   app.qIndex = idx;
+  app.learnPending = (s.pendingIds ?? []).map((id) => byId.get(id)).filter((c) => c && !c.suspended);
+  app.current = null;
   $("#resume-banner").classList.add("hidden");
   renderModeStrip();
   enterStudy();
@@ -527,7 +566,7 @@ async function resumeSession() {
 
 /** 残り枚数を出す。分母は学習中カードの出し直しで増えることがある */
 function updateProgress() {
-  const total = app.queue.length;
+  const total = app.queue.length + app.learnPending.length;
   const done = Math.min(app.qIndex, total);
   const pct = total ? Math.round((done / total) * 100) : 0;
   $("#study-progress .bar").style.width = pct + "%";
@@ -539,6 +578,7 @@ function finishScreen(q) {
   $("#answer-bar").classList.add("hidden");
   $("#study-tools").classList.add("hidden");
   $("#finished").classList.remove("hidden");
+  $("#finished-title").textContent = "今日のぶんは終わりです";
   const extra = (q?.available?.review ?? 0) + (q?.available?.new ?? 0);
   $("#finished-detail").textContent = extra
     ? `このモードの上限を超えて、あと ${extra} 枚出せます。`
@@ -547,12 +587,22 @@ function finishScreen(q) {
 }
 
 async function nextCard() {
-  if (app.qIndex >= app.queue.length) {
-    // 学習中カードで、まだ時間が来ていないものが残っていれば待たずに再取得
+  clearTimeout(app.waitTimer);
+  const prev = app.current;
+  let pick = chooseNext({
+    queue: app.queue, qIndex: app.qIndex, pending: app.learnPending, now: Date.now(), prev,
+  });
+  if (pick.kind === "done") {
+    // 上限の上乗せなどで増えた分がないか、取り直してみる
     const q = currentQueue();
-    if (q.cards.length) {
-      app.queue = q.cards;
+    const split = splitPending(q.cards);
+    if (split.queue.length || split.pending.length) {
+      app.queue = split.queue;
       app.qIndex = 0;
+      app.learnPending = split.pending;
+      pick = chooseNext({
+        queue: app.queue, qIndex: 0, pending: app.learnPending, now: Date.now(), prev,
+      });
     } else {
       await clearSession(); // やり切ったので「続きから」は出さない
       await showHome();
@@ -560,6 +610,20 @@ async function nextCard() {
       show("view-study");
       return;
     }
+  }
+  if (pick.kind === "wait") {
+    saveSession();
+    waitScreen(pick.until);
+    return;
+  }
+  if (pick.kind === "pending") {
+    // 時刻が来た学習中カードを、いまの位置に割り込ませる
+    const [c] = app.learnPending.splice(pick.index, 1);
+    app.queue.splice(app.qIndex, 0, c);
+  } else if (pick.index !== app.qIndex) {
+    // 直前と同じ単元が続かないよう、少し先のカードと入れ替える
+    const q = app.queue;
+    [q[app.qIndex], q[pick.index]] = [q[pick.index], q[app.qIndex]];
   }
   app.current = app.queue[app.qIndex];
   app.revealed = false;
@@ -591,13 +655,19 @@ async function drawCard(reveal) {
   // カードは他人が作った可能性のあるHTML。実行できる要素と外部通信を落としてから入れる
   area.innerHTML =
     `<style>${sanitizeCardCss(nt.css || "")}</style>`
+    // 🔴 デッキのCSSの**後ろ**に置き、`#card-content` を付けて詳細度で勝たせる。
+    //   デッキ側の `.card{line-height:1.9;font-size:19px}` に負けると、
+    //   ①行間の設定が効かない ②文字サイズの設定も効かない（どちらも実機で起きていた）。
+    //   行間は利用者の設定、文字サイズは #card-content に載せた設定値を継がせる。
+    + `<style>#card-content .card{line-height:${Number(app.settings.lineHeight) || 1.5};`
+    + `font-size:inherit}</style>`
     + `<div class="card">${sanitizeCardHtml(html)}</div>`;
   if (app.settings.hideCardAILinks) stripExternalAILinks(area);
   await typeset(area);
   area.classList.remove("typesetting");
 
   $("#study-deck").textContent = deck?.name.split("::").pop() ?? "";
-  const remain = app.queue.length - app.qIndex;
+  const remain = app.queue.length - app.qIndex + app.learnPending.length;
   $("#study-counts").innerHTML =
     `<span class="n0">残り ${remain}</span>` +
     (c.state === State.New ? '<span class="n0">新しいカード</span>' : "") +
@@ -737,7 +807,10 @@ async function grade(rating) {
     return; // 進めない。同じカードのまま留まる
   }
 
-  app.lastAnswer = { before: { ...c }, after: next, index: app.qIndex, buried: [] };
+  app.lastAnswer = {
+    before: { ...c }, after: next, index: app.qIndex, buried: [],
+    pending: [...app.learnPending],
+  };
   showUndoStrip(rating);
   const idx = app.cards.findIndex((x) => x.id === c.id);
   if (idx >= 0) app.cards[idx] = next;
@@ -754,12 +827,15 @@ async function grade(rating) {
   await burySiblingsOf(c);
   if (leechMsg) toast(leechMsg);
 
-  // 学習中カードは同じセッションでもう一度出す
+  // 学習中カードは、出し直しの時刻まで待たせてから同じ日のうちにもう一度出す。
+  // 数枚後にすぐ出すと、答えが頭に残ったまま「思い出せた」を押せてしまい、
+  // 想起の練習にならないうえ、FSRS にも短すぎる間隔が記録される。
   app.qIndex++;
-  saveSession();
-  if ((next.state === State.Learning || next.state === State.Relearning) && next.due <= now + 20 * 60000) {
-    app.queue.splice(Math.min(app.qIndex + 2, app.queue.length), 0, next);
+  if ((next.state === State.Learning || next.state === State.Relearning) && !next.suspended
+      && next.due < dayEnd(now, app.settings.rolloverHour)) {
+    app.learnPending.push(next);
   }
+  saveSession();
   await nextCard();
 }
 
@@ -784,7 +860,21 @@ function applyLeech(next, before, rating) {
     next.suspended = true;
     return `${th}回まちがえたので出題を止めました（設定→「保留中のカード」で戻せます）`;
   }
-  return `${th}回まちがえています。覚え方を変えてみてください`;
+  // 「覚え方を変えて」とだけ言って手段を渡さないのは、案内文で嘘をつくのと同じ。
+  // 実際に変えられるときだけ、その入口を案内する。
+  return canDrill()
+    ? `${th}回まちがえています。🤖 から別の角度で出題できます`
+    : `${th}回まちがえています。覚え方を変えてみてください`;
+}
+
+/**
+ * 別角度の出題ができる状態か。
+ * 提供元が「使わない」だと外部サイトを開くだけで、出題→答え合わせの
+ * 往復が成り立たない。**できないものを案内しない。**
+ */
+function canDrill() {
+  const s = aiSettings();
+  return s.provider !== "none" && !!s.key;
 }
 
 /** 同じノートから作られた別のカードを、その日はもう出さない */
@@ -806,7 +896,7 @@ async function burySiblingsOf(card) {
 
 async function undo() {
   if (!app.lastAnswer) return toast("取り消せる操作がありません");
-  const { before, index, buried } = app.lastAnswer;
+  const { before, index, buried, pending } = app.lastAnswer;
   const idx = app.cards.findIndex((x) => x.id === before.id);
   if (idx >= 0) app.cards[idx] = before;
   await store.put("cards", before);
@@ -825,6 +915,9 @@ async function undo() {
   }
   app.qIndex = index;
   app.queue[index] = before;
+  if (pending) app.learnPending = pending;
+  // いまのカードを「直前」扱いにしない（戻したカードをそのまま出す）
+  app.current = null;
   app.lastAnswer = null;
   await nextCard();
   toast("1つ戻しました");
@@ -1479,6 +1572,19 @@ async function openAI() {
     const lastQ = [...log.querySelectorAll(".ai-msg.me")].pop();
     if (lastQ) anchorToTop(lastQ);
   }
+  // 何度も間違えているカードにだけ「別の角度で出題」を出す。
+  // 常に出すと、覚えているカードでも押したくなって時間を食う。
+  // ここが AnkiDroid にできないところ＝**間違えた回数を見て問い方を変える**。
+  const drill = $("#ai-drill");
+  const showDrill = ctx.lapses >= 1 && canDrill();
+  drill.classList.toggle("hidden", !showDrill);
+  if (showDrill) {
+    drill.innerHTML =
+      `<button id="ai-drill-go" class="btn primary">🔁 別の角度で出題してもらう</button>
+       <span class="muted">${ctx.lapses}回まちがえています。問い方を変えると通ることがあります</span>`;
+    $("#ai-drill-go").onclick = () => runDrill(ctx);
+  }
+
   $("#ai-quick").innerHTML = quickPrompts()
     .map((p, i) => `<button data-i="${i}">${p.label}</button>`)
     .join("");
@@ -1497,6 +1603,42 @@ async function openAI() {
 }
 
 /**
+ * 別の角度から出題してもらう（何度も間違えているカード向け）。
+ *
+ * 出題 → 学習者が答える → 答え合わせ、の3段。
+ * **先に答えを見せない**ために、出題と答え合わせで2回に分けている。
+ *
+ * 🔴 ここで作った問題は**カードにしない**。成績にも間隔にも触れない。
+ *   カードにすると FSRS の推定が濁る（保持と転移を分けたのと同じ理由）。
+ *   その場かぎりの練習と割り切るからこそ、問い方を自由に変えられる。
+ */
+async function runDrill(ctx) {
+  const question = await sendAI(DRILL_ASK, ctx, "別の角度で出題して");
+  if (!question) return;
+
+  // ⚠️ id で引かない。続けて2問出すと入力欄が2つになり、
+  //    `$("#drill-input")` は先に出た方を返す＝**2問目の採点が1問目の答えを読む**。
+  //    その場で作った要素は、その場の変数で持つ。
+  const box = document.createElement("div");
+  box.className = "drill-answer";
+  const input = document.createElement("textarea");
+  input.rows = 2;
+  input.placeholder = "答えを書く（うろ覚えでも、書くほど残る）";
+  const check = document.createElement("button");
+  check.className = "btn primary";
+  check.textContent = "答え合わせ";
+  box.append(input, check);
+  $("#ai-log").appendChild(box);
+  input.focus();
+
+  check.onclick = async () => {
+    const mine = input.value.trim();
+    box.remove();                       // 二度押しと、答えが残ったままの採点を防ぐ
+    await sendAI(drillJudge(question, mine), ctx, mine || "（無回答）");
+  };
+}
+
+/**
  * その要素が読み取り欄の一番上に来るように送る。
  * 届くたびに末尾へ送ると、読み終わったとき末尾に貼りついて
  * 毎回わざわざ先頭まで戻ることになる。読み始めの位置を固定する。
@@ -1508,9 +1650,16 @@ function anchorToTop(el) {
   log.scrollTop = Math.max(0, log.scrollTop + delta);
 }
 
-async function sendAI(prompt, ctx) {
+/**
+ * @param {string} prompt AIへ送る文
+ * @param {object} ctx    カードの文脈
+ * @param {string} [label] 画面と記録に残す文言（長い指示文をそのまま見せたくないとき）
+ * @returns {Promise<string|null>} 生成された本文。失敗したら null
+ */
+async function sendAI(prompt, ctx, label) {
   const log = $("#ai-log");
-  log.insertAdjacentHTML("beforeend", `<div class="ai-msg me">${escapeHtml(prompt)}</div>`);
+  const shown = label ?? prompt;
+  log.insertAdjacentHTML("beforeend", `<div class="ai-msg me">${escapeHtml(shown)}</div>`);
   const question = log.lastElementChild;
   const holder = document.createElement("div");
   holder.className = "ai-msg ai";
@@ -1533,9 +1682,11 @@ async function sendAI(prompt, ctx) {
     });
     holder.innerHTML = renderMarkdown(answer);
     typeset(holder); // 数式は全部そろってから組む
-    if (card) await appendAIHistory(card, { q: prompt, a: answer, at: Date.now() });
+    if (card) await appendAIHistory(card, { q: shown, a: answer, at: Date.now() });
+    return answer;
   } catch (e) {
     holder.textContent = "失敗しました: " + e.message;
+    return null;
   } finally {
     $("#ai-status").textContent = "";
     anchorToTop(question); // 組み直しで位置がずれることがあるので置き直す
@@ -1569,26 +1720,48 @@ function examPlanHtml(remainingNew) {
   }
   const mode = app.modes.find((m) => m.id === app.modeId) || app.modes[1];
   const perDay = mode.limits?.new ?? 0;
-  const daysNeeded = perDay > 0 ? Math.ceil(remainingNew / perDay) : Infinity;
-  const need = Math.ceil(remainingNew / days);
-  const inTime = daysNeeded <= days;
+
+  // 🔴 以前はここで「未着手 ÷ 残り日数」を出して終わりだった。
+  //   それは**一度目を通せるか**でしかなく、本番で思い出せるかは何も言っていない。
+  //   いまは FSRS で試験日まで実際に回して、①本番日の想起率 ②本番までに回る回数
+  //   ③1日の山 を出す（`plan.js`）。決め手は枚数ではなくこの3つ。
+  const 候補 = [...new Set([10, 15, 20, 30, 40, 60, perDay].filter((n) => n > 0))].sort((a, b) => a - b);
+  const { rows, best } = planCandidates({
+    total: remainingNew, days, candidates: 候補,
+    againRate: 0.1,
+    loadCap: mode.limits?.review ?? Infinity,
+  });
+  const 現在 = rows.find((r) => r.perDay === perDay);
+
+  const 行 = (r) => `<tr class="${r === best ? "best" : ""}${r.間に合う ? "" : " danger"}">
+    <td>${r.perDay}枚${r.perDay === perDay ? "（いま）" : ""}</td>
+    <td>${r.一周日 ? r.一周日 + "日" : "届かない"}</td>
+    <td>${r.平均回数}回</td>
+    <td>${(r.試験日の想起率 * 100).toFixed(0)}%</td>
+    <td>${r["1日平均"]}／${r["1日ピーク"]}枚</td></tr>`;
 
   const verdict = !perDay
     ? `いまのモードは新規を出さない設定です。未着手が <strong>${remainingNew}枚</strong> 残ります。`
-    : inTime
-      ? `いまの <strong>${perDay}枚/日</strong> なら、<strong>あと${daysNeeded}日</strong>で全部に一度は目を通せます（${days - daysNeeded}日の余裕）。`
-      : `いまの <strong>${perDay}枚/日</strong> だと <strong>${daysNeeded}日</strong>かかり、<strong>${daysNeeded - days}日</strong>足りません。`;
+    : 現在?.間に合う
+      ? `いまの <strong>${perDay}枚/日</strong> なら <strong>${現在.一周日}日</strong>で一周し、
+         本番までに1枚あたり <strong>${現在.平均回数}回</strong>まわります。`
+      : `いまの <strong>${perDay}枚/日</strong> では <strong>${現在?.積み残し ?? remainingNew}枚</strong>が手つかずで本番を迎えます。`;
 
-  return `<div class="card-panel ${inTime || !perDay ? "" : "danger"}">
+  return `<div class="card-panel ${現在?.間に合う || !perDay ? "" : "danger"}">
     <h2>試験までの見通し</h2>
     <div class="stat-grid">
       <div class="stat"><div class="v">${days}</div><div class="k">試験まで（日）</div></div>
       <div class="stat"><div class="v">${remainingNew}</div><div class="k">まだ出していない枚数</div></div>
-      <div class="stat"><div class="v">${need}</div><div class="k">間に合わせるなら／日</div></div>
+      <div class="stat"><div class="v">${best.perDay}</div><div class="k">おすすめ／日</div></div>
     </div>
     <p class="hint">${verdict}</p>
-    <p class="hint">※「一度は目を通せる」だけの計算です。定着には復習が要るので、
-      実際にはもう少し早めに一周し終えるのが安全です。</p>
+    <table class="plan-table">
+      <thead><tr><th>1日の新規</th><th>一周</th><th>本番までに回る回数</th><th>本番日に思い出せる</th><th>1日の枚数 平均／ピーク</th></tr></thead>
+      <tbody>${rows.map(行).join("")}</tbody>
+    </table>
+    <p class="hint">※ FSRS で試験日まで実際に回した<strong>見積もり</strong>（1割を間違える前提）。予測ではありません。
+      「本番日に思い出せる」は、その日に出題されたら思い出せる確率の平均です。
+      枚数を増やすほど回数は増えますが、<strong>1日の山も上がります</strong>。続けられる高さを選んでください。</p>
   </div>`;
 }
 
@@ -1717,6 +1890,8 @@ function showSettings() {
   $("#set-hideailinks").checked = !!app.settings.hideCardAILinks;
   $("#set-fontsize").value = app.settings.fontSize;
   $("#set-fontsize-out").textContent = `${app.settings.fontSize}px`;
+  $("#set-lineheight").value = app.settings.lineHeight;
+  $("#set-lineheight-out").textContent = Number(app.settings.lineHeight).toFixed(2);
   const s = aiSettings();
   $("#set-ai-provider").value = s.provider;
   $("#set-ai-key").value = s.key;
@@ -1735,9 +1910,23 @@ function showSettings() {
   refreshBackupBanner();
   requestPersistence();
 
-  $("#mode-editor").innerHTML = app.modes
-    .map(
-      (m, i) => `<div class="mode-row" data-i="${i}">
+  // 取り込み済みのカードに実際に付いているタグを候補に出す。
+  // 何を打てばいいか分からない欄は、無いのと同じなので。
+  const tagCounts = new Map();
+  for (const n of app.notes.values()) {
+    for (const t of n.tags || []) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
+  }
+  const suggest = [...tagCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 40)
+    .map(([t, n]) => `<option value="${escapeHtml(t)}">${n}枚</option>`)
+    .join("");
+
+  $("#mode-editor").innerHTML =
+    `<datalist id="tag-suggest">${suggest}</datalist>` +
+    app.modes
+      .map(
+        (m, i) => `<div class="mode-row" data-i="${i}">
       <div class="mr-head"><span>${m.emoji}</span><span class="mr-name">${escapeHtml(m.name)}</span></div>
       <div class="muted">${escapeHtml(m.desc || "")}</div>
       <div class="mr-fields">
@@ -1747,9 +1936,13 @@ function showSettings() {
         <label>文字数上限 <input type="number" min="0" max="9999" data-k="chars" value="${m.filter?.maxChars || 0}"></label>
         <label><input type="checkbox" data-k="img" ${m.filter?.allowImage === false ? "" : "checked"}> 図を出す</label>
       </div>
+      <label class="mr-tags">このタグだけ出す
+        <input type="text" data-k="tags" list="tag-suggest" placeholder="空欄なら全部。例: 頻出度A"
+               value="${escapeHtml((m.filter?.includeTags || []).join(" "))}">
+      </label>
     </div>`
-    )
-    .join("");
+      )
+      .join("");
 }
 
 async function saveSettings() {
@@ -1760,6 +1953,7 @@ async function saveSettings() {
   app.settings.autoScrollToAnswer = $("#set-autoscroll").checked;
   app.settings.hideCardAILinks = $("#set-hideailinks").checked;
   app.settings.fontSize = Number($("#set-fontsize").value);
+  app.settings.lineHeight = Number($("#set-lineheight").value);
     app.settings.examDate = $("#set-examdate").value || null;
   app.settings.newOrder = $("#set-neworder").value;
   app.settings.shuffleSameDay = $("#set-shuffleday").checked;
@@ -1784,6 +1978,8 @@ async function saveSettings() {
         ...m.filter,
         maxChars: val("chars") || null,
         allowImage: row.querySelector('[data-k="img"]').checked,
+        // 空白区切り。空欄なら絞らない（queue.js は length を見るので空配列＝制限なし）
+        includeTags: row.querySelector('[data-k="tags"]').value.trim().split(/\s+/).filter(Boolean),
       },
     };
   });
@@ -1960,6 +2156,8 @@ async function searchAction(cardId, act) {
     // 見つけたカードを1枚だけ、その場で出す（期限や上限は無視する）
     app.queue = [c];
     app.qIndex = 0;
+    app.learnPending = [];
+    app.current = null;
     enterStudy();
     await nextCard();
   }
@@ -2426,6 +2624,8 @@ function wireUI() {
 
   $("#set-dr").oninput = (e) => ($("#set-dr-out").textContent = `${(e.target.value * 100).toFixed(0)}%`);
   $("#set-fontsize").oninput = (e) => ($("#set-fontsize-out").textContent = `${e.target.value}px`);
+  $("#set-lineheight").oninput = (e) =>
+    ($("#set-lineheight-out").textContent = Number(e.target.value).toFixed(2));
   $("#view-settings").addEventListener("change", async (e) => {
     if (e.target.id.startsWith("set-ai-")) {
       const key = e.target.id.replace("set-ai-", "");

@@ -211,6 +211,13 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
   /* デッキ側のCSSは何が書いてあるか分からないので、はみ出しはここで閉じ込める */
   overflow-x: auto;
 }
+/* 🔴 カード本文の行間は、画面全体（1.7）より詰める。
+   1.7 は UI の読みやすさに合わせた値だが、日本語の本文に当てると
+   1行おきに空きができ、**スクロール量が増えて1枚が一望できなくなる**。
+   実機のスクリーンショットで、5行の設問が画面の1/3を占めていた。
+   1.55 は日本語本文として詰まりすぎず、1画面に収まる行数が約1割増える。 */
+.card-render { line-height: 1.55; }
+
 /* デッキ由来のCSSが固定幅を持っていても画面からはみ出させない */
 .card-render .card { max-width: 100% !important; box-sizing: border-box; }
 .card-render table, .card-render pre { max-width: 100%; display: block; overflow-x: auto; }
@@ -363,6 +370,29 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
   box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.4);
 }
 .panel-head { display: flex; justify-content: space-between; align-items: center; }
+
+/* 間違えたカードにだけ出る「別の角度で出題」。定型の質問より前に、目立たせて置く */
+#ai-drill {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+  margin: 0.5rem 0 0.2rem;
+}
+#ai-drill .muted { font-size: 0.75rem; }
+.drill-answer { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.5rem 0; }
+.drill-answer textarea {
+  width: 100%;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.5rem;
+  resize: vertical;
+}
+.drill-answer button { align-self: flex-end; }
+
 #ai-quick { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.4rem 0; }
 #ai-quick button {
   border: 1px solid var(--line);
@@ -419,6 +449,11 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 .mode-row .mr-fields { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.4rem; }
 .mode-row label { font-size: 0.8rem; color: var(--fg-dim); display: flex; align-items: center; gap: 0.3rem; }
 .mode-row input[type="number"] { width: 5rem; }
+/* タグ絞り込みは幅が要るので、数値欄と違って1行を占める */
+.mode-row .mr-tags { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.45rem; }
+.mode-row .mr-tags input { flex: 1; min-width: 0; font: inherit; font-size: 0.85rem;
+  color: var(--fg); background: var(--bg-card); border: 1px solid var(--line);
+  border-radius: 6px; padding: 0.3rem 0.45rem; }
 
 /* ---------- 統計 ---------- */
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.7rem; }
@@ -670,8 +705,11 @@ body.studying #banners { display: none; }
   overflow-y: hidden;
   max-width: 100%;
   line-height: normal;
-  padding-top: 0.45em;
-  padding-bottom: 0.45em;
+  /* 上下の余白は分数や指数が切れないために要る。ただし取りすぎると
+     数式を含む行だけ極端に背が高くなり、行送りがばらついて見える。
+     数式そのものを 1.15 倍にした分、余白は少し削って釣り合わせる。 */
+  padding-top: 0.3em;
+  padding-bottom: 0.3em;
 }
 .card-render mjx-container[display="true"],
 .ai-msg.ai mjx-container[display="true"] {
@@ -728,3 +766,12 @@ details.card-panel > *:not(summary) { margin-left: 1rem; margin-right: 1rem; }
 details.card-panel > *:last-child { margin-bottom: 1rem; }
 details.card-panel > summary + * { margin-top: 0.8rem; }
 details.card-panel.danger > summary { color: var(--bad); }
+
+/* 試験までの見通しの表（1日何枚を比べる） */
+.plan-table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: .9rem; }
+.plan-table th, .plan-table td { padding: .35rem .4rem; text-align: right; border-bottom: 1px solid var(--line, #ddd); }
+.plan-table th:first-child, .plan-table td:first-child { text-align: left; }
+.plan-table th { font-weight: 600; opacity: .75; font-size: .85em; }
+/* おすすめの行だけ地を敷く。色ではなく地の濃さで示す（色覚に依らない） */
+.plan-table tr.best td { background: rgba(127, 127, 127, .16); font-weight: 700; }
+.plan-table tr.danger td { opacity: .55; text-decoration-line: line-through; text-decoration-thickness: 1px; }
