@@ -41,6 +41,11 @@
     <button id="btn-backup-now" class="btn small">書き出す</button>
     <button class="banner-x icon-btn" data-close="backup-banner" aria-label="閉じる">✕</button>
   </div>
+  <div id="opt-banner" class="banner hidden">
+    <span id="opt-msg"></span>
+    <button id="btn-opt-now" class="btn small">作り直す</button>
+    <button class="banner-x icon-btn" data-close="opt-banner" aria-label="閉じる">✕</button>
+  </div>
   <div id="resume-banner" class="banner hidden">
     <span id="resume-msg"></span>
     <button id="btn-resume" class="btn small">続きから</button>
@@ -107,6 +112,10 @@
 
   <div id="card-area">
     <div id="card-content" class="card-render"></div>
+    <details id="confuse-box" class="confuse hidden" open>
+      <summary>取り違えやすいカード（<span id="confuse-count"></span>）— 問いが似ていて答えが違います。見比べてください</summary>
+      <div id="confuse-list"></div>
+    </details>
   </div>
 
   <div id="answer-bar">
@@ -210,6 +219,12 @@
     </label>
     <p class="hint">高いほど復習は増えて忘れにくくなります。既定は 0.90。</p>
     <div class="field">
+      <span>保持率のおすすめ</span>
+      <div id="dr-rec" class="hint">1日に答えられる回数が限られているなら、保持率を下げて浮いた時間で新しいカードを覚えるほうが、本番に思い出せる枚数は多くなります。あなたの最近の学習量で計算します。</div>
+      <button id="btn-dr-rec" class="btn">学習量から計算する</button>
+      <button id="btn-dr-apply" class="btn primary hidden"></button>
+    </div>
+    <div class="field">
       <span>自分の記憶に合わせる</span>
       <p id="opt-status" class="hint"></p>
       <button id="btn-optimize" class="btn">解答の履歴から作り直す</button>
@@ -257,7 +272,7 @@
     <label class="field"><span>本番の日付</span>
       <input type="date" id="set-examdate">
     </label>
-    <p class="hint">統計に「間に合うか」「1日何枚か」を出します。</p>
+    <p class="hint">統計に「間に合うか」「1日何枚か」を出します。次の復習が試験日より後になり、本番に思い出せる見込みが95%を切るカードは、試験の1〜3日前にもう一度出します。</p>
   </details>
 
   <details class="card-panel">

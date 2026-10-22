@@ -775,3 +775,10 @@ details.card-panel.danger > summary { color: var(--bad); }
 /* おすすめの行だけ地を敷く。色ではなく地の濃さで示す（色覚に依らない） */
 .plan-table tr.best td { background: rgba(127, 127, 127, .16); font-weight: 700; }
 .plan-table tr.danger td { opacity: .55; text-decoration-line: line-through; text-decoration-thickness: 1px; }
+
+/* 取り違えやすいカード（間違えたことのあるカードの答えの下） */
+.confuse { margin: .8rem 0 0; padding: .5rem .7rem; border: 1px dashed var(--line, #888); border-radius: 8px; font-size: .9rem; }
+.confuse summary { cursor: pointer; opacity: .8; }
+.confuse-item { padding: .45rem 0; border-top: 1px solid var(--line, #ddd); }
+.confuse-item:first-child { border-top: 0; }
+.confuse-item .ca { font-weight: 600; margin-top: .15rem; }

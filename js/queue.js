@@ -107,15 +107,25 @@ function topDeckOf(card, deckNameById) {
   return name ? name.split("::")[0] : "";
 }
 
+/**
+ * 測った重さの控え。出題列を組むたびに全ノートの HTML を剥がすと、3万枚で 0.2 秒かかる（PC）。
+ * 中身（fields・tags の配列）が差し替わったら測り直す。編集も leech の札付けも配列ごと差し替える。
+ */
+const weightCache = new WeakMap();
+
 /** カードが持つ「見た目の重さ」を測る（モードの判定に使う） */
 export function cardWeight(note, notetype) {
+  const hit = weightCache.get(note);
+  if (hit && hit.f === note.fields && hit.t === note.tags) return hit.w;
   const text = note.fields.join(" ");
-  return {
+  const w = {
     chars: stripHtml(text).length,
     hasImage: /<img\b/i.test(text),
     hasSound: /\[sound:/i.test(text),
     tags: note.tags,
   };
+  weightCache.set(note, { f: note.fields, t: note.tags, w });
+  return w;
 }
 
 function matchesFilter(card, weight, filter) {
@@ -252,7 +262,8 @@ export function buildQueue(opts) {
   // 同じ期限のカードが毎日同じ順で出ると、順番そのものを手がかりに思い出してしまう。
   // 期限の前後は崩さず、同じ日の中だけ日替わりで入れ替える。
   const daySeed = Math.floor(dayStart(now, rolloverHour) / DAY_MS);
-  if (shuffleSameDay && mode.order !== "random") {
+  // 難しい順・間違えた順のときは入れ替えない（期限の日ごとに組み直すと、その並びが消える）
+  if (shuffleSameDay && (mode.order ?? "due") === "due") {
     const shuffled = shuffleWithinDay(review, daySeed, rolloverHour);
     review.length = 0;
     review.push(...shuffled);

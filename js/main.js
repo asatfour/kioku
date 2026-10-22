@@ -7,7 +7,9 @@ import { Fsrs, State, Rating, humanInterval, DEFAULT_PARAMETERS } from "./fsrs.j
 import { renderCard, resolveMedia, stripHtml, sanitizeCardHtml, sanitizeCardCss } from "./render.js";
 import { buildQueue, DEFAULT_MODES, todayStats, forecast, dayStart, dayEnd, splitPending, chooseNext } from "./queue.js";
 import { planCandidates } from "./plan.js";
-import { optimize, recomputeMemory, MIN_REVIEWS } from "./optimize.js";
+import { optimize, recomputeMemory, MIN_REVIEWS, buildHistories } from "./optimize.js";
+import { recommendRetention, studyHabit } from "./retention.js";
+import { findConfusable } from "./confuse.js";
 import { askAI, quickPrompts, buildContext, DRILL_ASK, drillJudge } from "./ai.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -151,7 +153,16 @@ function makeFsrs() {
     learningSteps: app.settings.learningSteps,
     relearningSteps: app.settings.relearningSteps,
     enableFuzz: true,
+    deadline: examDeadline(),
   });
+}
+
+/** 試験日の始まり(ms)。未設定・不正なら null */
+function examDeadline() {
+  const iso = app.settings.examDate;
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  const t = new Date(iso + "T00:00:00").getTime();
+  return Number.isFinite(t) ? t : null;
 }
 
 async function sqlReady() {
@@ -197,6 +208,7 @@ async function showHome() {
   await refreshBackupBanner();
   await refreshResumeBanner();
   if (!has) return;
+  await refreshOptBanner();
 
   await refreshTodayCounts();
   const rev = await store.revlogSince(dayStart(Date.now(), app.settings.rolloverHour));
@@ -536,6 +548,36 @@ async function refreshResumeBanner() {
   el.classList.remove("hidden");
 }
 
+/**
+ * 「自分の記憶に合わせる」を勧める帯。ボタンは設定の奥にあり、押されなければ効かない。
+ * 1日以上空けた復習が 400 回たまったとき（作り直した後は、そのときの 1.5 倍になったとき）に出す。
+ * 閉じたら、その時点の 1.5 倍になるまで出さない。
+ * 履歴を全部読むのは重いので、解答の記録が 200 件増えるまでは前回の数え直しを使う。
+ */
+async function refreshOptBanner() {
+  const el = $("#opt-banner");
+  if (!el || el.dataset.dismissed === "1") return;
+  let st = (await store.getMeta("optNudge", null)) ?? {};
+  const n = await store.count("revlog");
+  if (st.count == null || n - st.count >= 200 || n < st.count) {
+    st = { ...st, count: n, predictable: buildHistories(await store.revlogSince(0)).predictable };
+    await store.setMeta("optNudge", st);
+  }
+  const base = Math.max(app.settings.optimizedReviews ?? 0, st.seenAt ?? 0);
+  const show = st.predictable >= MIN_REVIEWS && (base === 0 || st.predictable >= base * 1.5);
+  if (!show) return el.classList.add("hidden");
+  $("#opt-msg").textContent = app.settings.optimizedAt
+    ? `前回より解答が増えました（1日以上空けた復習 ${st.predictable} 回）。復習の間隔を、あなたの記憶に合わせて作り直せます。`
+    : `1日以上空けた復習が ${st.predictable} 回たまりました。復習の間隔を、あなたの記憶に合わせて作り直せます（端末の中で数秒）。`;
+  el.classList.remove("hidden");
+}
+
+/** 帯を閉じた・作り直した時点を覚える（次は 1.5 倍になるまで出さない） */
+async function markOptNudgeSeen() {
+  const st = (await store.getMeta("optNudge", null)) ?? {};
+  await store.setMeta("optNudge", { ...st, seenAt: st.predictable ?? 0 });
+}
+
 async function resumeSession() {
   const s = await store.getMeta("session", null);
   if (!s) return toast("続きが見つかりませんでした");
@@ -666,6 +708,7 @@ async function drawCard(reveal) {
   if (app.settings.hideCardAILinks) stripExternalAILinks(area);
   await typeset(area);
   area.classList.remove("typesetting");
+  renderConfusable(c, note, reveal);
 
   $("#study-deck").textContent = deck?.name.split("::").pop() ?? "";
   const remain = app.queue.length - app.qIndex + app.learnPending.length;
@@ -683,6 +726,36 @@ async function drawCard(reveal) {
     guardGrades();
     if (app.settings.autoScrollToAnswer) scrollToAnswer(area);
   }
+}
+
+/**
+ * 間違えたことのあるカードの答えに、取り違えやすいカード（問いが似ていて答えが違う）を並べる。
+ * 同じ一番上のデッキの中から探す。
+ */
+function renderConfusable(c, note, reveal) {
+  const box = $("#confuse-box");
+  const show = reveal && ((c.lapses ?? 0) >= 1 || c.state === State.Relearning);
+  let found = [];
+  if (show) {
+    try {
+      const topOf = new Map(app.decks.map((d) => [d.id, d.name.split("::")[0]]));
+      const top = topOf.get(c.did) ?? "";
+      const nids = new Set();
+      for (const x of app.cards) if (topOf.get(x.did) === top) nids.add(x.nid);
+      const pool = [];
+      for (const id of nids) { const n = app.notes.get(id); if (n) pool.push(n); }
+      found = findConfusable(note, pool, app.notetypes, { key: top });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  box.classList.toggle("hidden", !found.length);
+  if (!found.length) return;
+  const cut = (h, n) => { const t = stripHtml(h ?? ""); return t.length > n ? t.slice(0, n) + "…" : t; };
+  $("#confuse-list").innerHTML = found.map(({ note: n }) =>
+    `<div class="confuse-item"><div class="cq">${escapeHtml(cut(n.fields[0], 140))}</div>`
+    + `<div class="ca">→ ${escapeHtml(cut(n.fields[1], 100))}</div></div>`).join("");
+  $("#confuse-count").textContent = String(found.length);
 }
 
 /**
@@ -1932,6 +2005,71 @@ async function runOptimize() {
 }
 
 /**
+ * 目標保持率のおすすめを出す。最近の学習量（1日の解答数・学習する日の割合）と残りの枚数で、
+ * 試験日（無ければ半年先）に思い出せる枚数が最も多くなる保持率を、候補を回して探す。
+ * 設定は勝手に変えない（「これにする」で切り替える）。
+ */
+async function runRecommendRetention() {
+  const btn = $("#btn-dr-rec");
+  btn.disabled = true;
+  $("#btn-dr-apply").classList.add("hidden");
+  busy("最近の学習量を読んでいます…");
+  try {
+    const now = Date.now();
+    const habit = studyHabit(await store.revlogSince(now - 29 * 86400000), now, app.settings.rolloverHour);
+    if (!habit) {
+      $("#dr-rec").textContent = "最近28日で学習した日が5日未満のため、まだ見積もれません。";
+      return;
+    }
+    const deadline = examDeadline();
+    const days = deadline && deadline > now + 7 * 86400000 ? Math.ceil((deadline - now) / 86400000) : 180;
+    const newPerDay = Math.max(...app.modes.map((m) => m.limits?.new ?? 0), 1);
+    await new Promise((r) => setTimeout(r, 0));
+    busy("保持率ごとに、本番までの学習を試しています…");
+    await new Promise((r) => setTimeout(r, 30));
+    const res = recommendRetention({
+      cards: app.cards.filter((c) => !c.suspended),
+      parameters: app.settings.parameters,
+      capacity: habit.capacity, studyRate: habit.studyRate, newPerDay, days, now,
+      deadline: deadline && deadline > now + 7 * 86400000 ? deadline : null,
+    });
+    const when = days === 180 && !(deadline > now + 7 * 86400000) ? "半年後" : `試験日（${app.settings.examDate}）`;
+    const cur = app.settings.desiredRetention;
+    const rows = res.rows.map((r) =>
+      `<tr${r.retention === res.best ? ' class="best"' : ""}><td>${(r.retention * 100).toFixed(0)}%</td>`
+      + `<td>${Math.round(r.knowledge)} 枚</td><td>${Math.round(r.introduced)} 枚</td></tr>`).join("");
+    $("#dr-rec").innerHTML =
+      `最近は1日 約${habit.capacity}回・28日中${habit.days}日学習。この調子で${when}に思い出せる枚数の見込み（保持率を下げると復習が減り、そのぶん新しいカードに進めます）:`
+      + `<table class="plan-table"><tr><th>保持率</th><th>思い出せる</th><th>覚え始めた</th></tr>${rows}</table>`
+      + `おすすめは <strong>${(res.best * 100).toFixed(0)}%</strong>`
+      + (Math.abs(res.best - cur) < 0.005 ? "（今の設定のままで良いです）。" : `（今は ${(cur * 100).toFixed(0)}%）。`)
+      + (app.settings.optimizedAt ? "" : " ※まだ既定の記憶の性質で計算しています。「解答の履歴から作り直す」の後のほうが当たります。");
+    if (Math.abs(res.best - cur) >= 0.005) {
+      const ap = $("#btn-dr-apply");
+      ap.textContent = `${(res.best * 100).toFixed(0)}% にする`;
+      ap.dataset.value = String(res.best);
+      ap.classList.remove("hidden");
+    }
+  } catch (e) {
+    console.error(e);
+    toast("計算できませんでした: " + (e?.message ?? e));
+  } finally {
+    unbusy();
+    btn.disabled = false;
+  }
+}
+
+async function applyRecommendedRetention() {
+  const v = Number($("#btn-dr-apply").dataset.value);
+  if (!(v > 0 && v < 1)) return;
+  $("#set-dr").value = String(v);
+  $("#set-dr-out").textContent = `${(v * 100).toFixed(0)}%`;
+  await saveSettings();
+  $("#btn-dr-apply").classList.add("hidden");
+  toast(`目標保持率を ${(v * 100).toFixed(0)}% にしました`);
+}
+
+/**
  * 記憶状態（安定度・難易度）を、指定の値で履歴から計算し直す。予定日は動かさない。
  * 途中の学習の並びに入っているカードも差し替える（古い状態のまま採点しないため）。
  */
@@ -2556,6 +2694,8 @@ function wireUI() {
   $("#btn-more").onclick = studyMore;
   $("#btn-optimize").onclick = runOptimize;
   $("#btn-optimize-reset").onclick = resetOptimize;
+  $("#btn-dr-rec").onclick = runRecommendRetention;
+  $("#btn-dr-apply").onclick = applyRecommendedRetention;
   $("#btn-show").onclick = async () => {
     app.revealed = true;
     app.revealedAt = Date.now(); // 押し間違いの判定に使う
@@ -2629,7 +2769,13 @@ function wireUI() {
     const el = $("#" + x.dataset.close);
     el.classList.add("hidden");
     el.dataset.dismissed = "1"; // この起動中は出し直さない
+    if (x.dataset.close === "opt-banner") markOptNudgeSeen();
   });
+  $("#btn-opt-now").onclick = async () => {
+    $("#opt-banner").classList.add("hidden");
+    await markOptNudgeSeen();
+    await runOptimize();
+  };
   $("#btn-reload").onclick = () => location.reload();
   $("#btn-install").onclick = doInstall;
   $("#btn-install-2").onclick = doInstall;
