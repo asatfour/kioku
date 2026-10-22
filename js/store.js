@@ -178,11 +178,13 @@ export async function buildMediaUrls(names) {
 
 // ---- 復習ログ ----
 
+/** 記録して、その記録のキーを返す（取り消しで消すため） */
 export async function addRevlog(entry) {
   await open();
   const t = tx(["revlog"], "readwrite");
-  t.objectStore("revlog").add(entry);
-  return done(t);
+  const r = t.objectStore("revlog").add(entry);
+  await done(t);
+  return r.result;
 }
 
 export async function revlogSince(sinceMs) {

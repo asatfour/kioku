@@ -7,6 +7,7 @@ import { Fsrs, State, Rating, humanInterval, DEFAULT_PARAMETERS } from "./fsrs.j
 import { renderCard, resolveMedia, stripHtml, sanitizeCardHtml, sanitizeCardCss } from "./render.js";
 import { buildQueue, DEFAULT_MODES, todayStats, forecast, dayStart, dayEnd, splitPending, chooseNext } from "./queue.js";
 import { planCandidates } from "./plan.js";
+import { optimize, recomputeMemory, MIN_REVIEWS } from "./optimize.js";
 import { askAI, quickPrompts, buildContext, DRILL_ASK, drillJudge } from "./ai.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -798,9 +799,10 @@ async function grade(rating) {
 
   // 先に保存する。容量不足などで書けなかったときに「答えたのに記録されていない」を
   // 黙って通さないため、画面を進める前に確定させる。
+  let revlogId;
   try {
     await store.put("cards", next);
-    await store.addRevlog({ ...log, cardId: c.id });
+    revlogId = await store.addRevlog({ ...log, cardId: c.id });
   } catch (e) {
     console.error(e);
     toast("保存できませんでした。この回答は記録されていません（空き容量をご確認ください）");
@@ -809,7 +811,7 @@ async function grade(rating) {
 
   app.lastAnswer = {
     before: { ...c }, after: next, index: app.qIndex, buried: [],
-    pending: [...app.learnPending],
+    pending: [...app.learnPending], revlogId,
   };
   showUndoStrip(rating);
   const idx = app.cards.findIndex((x) => x.id === c.id);
@@ -896,10 +898,13 @@ async function burySiblingsOf(card) {
 
 async function undo() {
   if (!app.lastAnswer) return toast("取り消せる操作がありません");
-  const { before, index, buried, pending } = app.lastAnswer;
+  const { before, index, buried, pending, revlogId } = app.lastAnswer;
   const idx = app.cards.findIndex((x) => x.id === before.id);
   if (idx >= 0) app.cards[idx] = before;
   await store.put("cards", before);
+  // 解答の記録も消す。残すと、取り消した解答が今日の枚数・正答率や、
+  // 履歴からのパラメータの作り直しに混ざってしまう
+  if (revlogId != null) await store.del("revlog", [revlogId]).catch(() => {});
   // 伏せた兄弟カードも元に戻す（戻したのに出てこない、を防ぐ）
   for (const s of buried ?? []) {
     const i = app.cards.findIndex((x) => x.id === s.id);
@@ -951,6 +956,8 @@ async function importFile(file) {
         data.revlog.map((r) => ({
           id: r.id, cardId: r.cid, rating: r.rating, reviewedAt: r.reviewedAt,
           durationMs: r.durationMs, imported: true,
+          // Anki の記録の種類（0=学習 1=復習 2=再学習 3=臨時 4=手動）。履歴が最初から揃っているかの判定に使う
+          type: r.type,
         }))
       );
     }
@@ -1879,8 +1886,87 @@ function byDeckHtml() {
 
 // ---------------------------------------------------------------- 設定
 
+/** 「自分の記憶に合わせる」の今の状態を出す */
+function renderOptStatus() {
+  const at = app.settings.optimizedAt;
+  $("#opt-status").textContent = at
+    ? `あなた向けの値を使っています（${new Date(at).toLocaleDateString()}・復習 ${app.settings.optimizedReviews ?? "?"} 回から推定）`
+    : `既定の値を使っています。1日以上空けた復習が ${MIN_REVIEWS} 回たまると作り直せます。`;
+  $("#btn-optimize-reset").classList.toggle("hidden", !at);
+}
+
+async function runOptimize() {
+  const btn = $("#btn-optimize");
+  btn.disabled = true;
+  busy("解答の履歴を読んでいます…");
+  try {
+    const revlog = await store.revlogSince(0);
+    const res = await optimize(revlog, app.settings.parameters, {
+      onProgress: async (p) => {
+        busy(`あなたの記憶の性質を推定しています… ${Math.round(p * 100)}%`);
+        await new Promise((r) => setTimeout(r, 0)); // 画面を固めない
+      },
+    });
+    if (!res.ok) {
+      toast(res.reason === "few"
+        ? `まだ履歴が足りません（1日以上空けた復習 ${res.reviews} / ${MIN_REVIEWS} 回）`
+        : "いまの値のほうがよく当たっていたので、変えませんでした");
+      return;
+    }
+    app.settings.parameters = res.parameters;
+    app.settings.optimizedAt = Date.now();
+    app.settings.optimizedReviews = res.reviews;
+    await store.setMeta("settings", app.settings);
+    makeFsrs();
+    const changed = await applyMemory(revlog, res.parameters);
+    const gain = ((1 - res.after / res.before) * 100).toFixed(1);
+    toast(`あなた向けの値に切り替えました（予測の外れ ${gain}% 減・${changed} 枚の記憶状態を更新）`);
+  } catch (e) {
+    console.error(e);
+    toast("作り直せませんでした: " + (e?.message ?? e));
+  } finally {
+    unbusy();
+    btn.disabled = false;
+    renderOptStatus();
+  }
+}
+
+/**
+ * 記憶状態（安定度・難易度）を、指定の値で履歴から計算し直す。予定日は動かさない。
+ * 途中の学習の並びに入っているカードも差し替える（古い状態のまま採点しないため）。
+ */
+async function applyMemory(revlog, parameters) {
+  const mem = recomputeMemory(revlog, parameters);
+  const changed = new Map();
+  const upd = (c) => {
+    const m = mem.get(c.id);
+    if (!m || c.state === State.New || c.stability == null) return c;
+    const next = { ...c, stability: m.stability, difficulty: m.difficulty };
+    changed.set(c.id, next);
+    return next;
+  };
+  app.cards = app.cards.map(upd);
+  app.queue = app.queue.map((c) => changed.get(c.id) ?? c);
+  app.learnPending = app.learnPending.map((c) => changed.get(c.id) ?? c);
+  if (app.current) app.current = changed.get(app.current.id) ?? app.current;
+  if (changed.size) await store.putAll("cards", [...changed.values()]);
+  return changed.size;
+}
+
+async function resetOptimize() {
+  app.settings.parameters = [...DEFAULT_PARAMETERS];
+  app.settings.optimizedAt = null;
+  app.settings.optimizedReviews = null;
+  await store.setMeta("settings", app.settings);
+  makeFsrs();
+  await applyMemory(await store.revlogSince(0), app.settings.parameters);
+  renderOptStatus();
+  toast("既定の値に戻しました");
+}
+
 function showSettings() {
   show("view-settings");
+  renderOptStatus();
   $("#set-dr").value = app.settings.desiredRetention;
   $("#set-dr-out").textContent = `${(app.settings.desiredRetention * 100).toFixed(0)}%`;
   $("#set-rollover").value = app.settings.rolloverHour;
@@ -2468,6 +2554,8 @@ function wireUI() {
   };
   $("#btn-back-home").onclick = showHome;
   $("#btn-more").onclick = studyMore;
+  $("#btn-optimize").onclick = runOptimize;
+  $("#btn-optimize-reset").onclick = resetOptimize;
   $("#btn-show").onclick = async () => {
     app.revealed = true;
     app.revealedAt = Date.now(); // 押し間違いの判定に使う

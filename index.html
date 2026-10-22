@@ -209,6 +209,13 @@
       <output id="set-dr-out"></output>
     </label>
     <p class="hint">高いほど復習は増えて忘れにくくなります。既定は 0.90。</p>
+    <div class="field">
+      <span>自分の記憶に合わせる</span>
+      <p id="opt-status" class="hint"></p>
+      <button id="btn-optimize" class="btn">解答の履歴から作り直す</button>
+      <button id="btn-optimize-reset" class="btn hidden">既定の値に戻す</button>
+    </div>
+    <p class="hint">これまでの解答から「どのくらいで忘れるか」を推定し、復習の間隔をあなた向けに直します。学習に使っていないカードで予測が良くなったときだけ切り替えます。端末の中だけで計算します。</p>
     <label class="field">
       <span>1日の区切り（この時刻までは前日扱い）</span>
       <input type="number" id="set-rollover" min="0" max="23">時
